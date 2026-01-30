@@ -1,0 +1,60 @@
+# Common CI pipeline that detects changes and triggers appropriate service builds
+# Runs on push or merge to main branch
+name: CI - Detect Changes and Build
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      exim: ${{ steps.changes.outputs.exim }}
+      tinyproxy: ${{ steps.changes.outputs.tinyproxy }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Detect changed paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            exim:
+              - 'exim/**'
+            tinyproxy:
+              - 'tinyproxy/**'
+
+  build-exim:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.exim == 'true'
+    uses: ./.github/workflows/build-exim.yml
+    secrets: inherit
+
+  build-tinyproxy:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.tinyproxy == 'true'
+    uses: ./.github/workflows/build-tinyproxy.yml
+    secrets: inherit
+
+  summary:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-exim, build-tinyproxy]
+    if: always()
+    
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "### Changes Detected" >> $GITHUB_STEP_SUMMARY
+          echo "- **exim:** ${{ needs.detect-changes.outputs.exim }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **tinyproxy:** ${{ needs.detect-changes.outputs.tinyproxy }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Status" >> $GITHUB_STEP_SUMMARY
+          echo "- **exim:** ${{ needs.build-exim.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **tinyproxy:** ${{ needs.build-tinyproxy.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
