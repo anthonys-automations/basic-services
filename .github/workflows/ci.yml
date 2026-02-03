@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       exim: ${{ steps.changes.outputs.exim }}
+      postfix: ${{ steps.changes.outputs.postfix }}
       tinyproxy: ${{ steps.changes.outputs.tinyproxy }}
     
     steps:
@@ -27,6 +28,8 @@ jobs:
           filters: |
             exim:
               - 'exim/**'
+            postfix:
+              - 'postfix/**'
             tinyproxy:
               - 'tinyproxy/**'
 
@@ -34,6 +37,12 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.exim == 'true'
     uses: ./.github/workflows/build-exim.yml
+    secrets: inherit
+
+  build-postfix:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.postfix == 'true'
+    uses: ./.github/workflows/build-postfix.yml
     secrets: inherit
 
   build-tinyproxy:
@@ -44,7 +53,7 @@ jobs:
 
   summary:
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-exim, build-tinyproxy]
+    needs: [detect-changes, build-exim, build-postfix, build-tinyproxy]
     if: always()
     
     steps:
@@ -53,8 +62,10 @@ jobs:
           echo "## CI Summary" >> $GITHUB_STEP_SUMMARY
           echo "### Changes Detected" >> $GITHUB_STEP_SUMMARY
           echo "- **exim:** ${{ needs.detect-changes.outputs.exim }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **postfix:** ${{ needs.detect-changes.outputs.postfix }}" >> $GITHUB_STEP_SUMMARY
           echo "- **tinyproxy:** ${{ needs.detect-changes.outputs.tinyproxy }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Build Status" >> $GITHUB_STEP_SUMMARY
           echo "- **exim:** ${{ needs.build-exim.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **postfix:** ${{ needs.build-postfix.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **tinyproxy:** ${{ needs.build-tinyproxy.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
