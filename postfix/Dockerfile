@@ -1,4 +1,6 @@
-FROM alpine:latest
+# Pinned to an explicit Alpine release instead of `latest` so builds are
+# reproducible and base image bumps are proposed/reviewed by Renovate.
+FROM alpine:3.22.1
 
 # postfix:                       the MTA itself
 # openssl:                       STARTTLS support and ad-hoc cert ops

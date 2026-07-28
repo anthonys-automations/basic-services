@@ -1,0 +1,40 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard"
+  ],
+  "comment": "Config for the standalone Renovate run in .github/workflows/renovate.yml. Automerge is enabled because the Alpine base images are now pinned to explicit releases and need automated bumps. No 'schedule' here on purpose: run timing is owned solely by the workflow cron, so this config never blocks an on-demand workflow_dispatch run.",
+  "timezone": "Etc/UTC",
+  "automerge": true,
+  "automergeType": "pr",
+  "platformAutomerge": true,
+  "prCreation": "immediate",
+  "rebaseWhen": "behind-base-branch",
+  "labels": [
+    "dependencies"
+  ],
+  "packageRules": [
+    {
+      "description": "Bump the pinned Alpine base image in all Dockerfiles",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchPackageNames": [
+        "alpine"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Keep GitHub Actions used by the build/CI pipelines current",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "automerge": true
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "automerge": true
+  }
+}
