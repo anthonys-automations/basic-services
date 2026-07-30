@@ -1,0 +1,124 @@
+# Reusable pipeline that builds and publishes a single service image for
+# linux/amd64.
+#
+# Introduced to replace the three near-identical per-service workflows and to
+# implement the agreed Docker tag strategy: downstream Kubernetes repositories
+# track these images with their own Renovate, so releases must be immutable,
+# sortable and architecture-scoped.
+#
+# Tags published here:
+#   <YYYY>.<MM>.<DD>.<N>-amd64   immutable release, this is what k8s pins
+#   latest-amd64                 moving alias, convenience only - never deploy it
+#
+# The unsuffixed `latest` / version tags are deliberately NOT published by this
+# workflow. They are reserved for a promoted multi-architecture manifest, so a
+# mixed-architecture cluster can never be handed an amd64-only image.
+#
+# Package inventory is not queried from an independent container before the
+# build (that could drift from what actually gets installed, since Alpine's
+# package index is mutable). Instead the build enables a BuildKit SBOM
+# attestation, which reflects the exact image that gets pushed; inspect it with
+# `docker buildx imagetools inspect --format '{{ json .SBOM }}' <repo>:<tag>`.
+#
+# Downstream Renovate configuration (in the consuming k8s repo):
+#   # renovate: datasource=docker depName=<repo> versioning=regex:^(?<major>\d{4})\.(?<minor>\d{2})\.(?<patch>\d{2})\.(?<build>\d+)(?:-(?<compatibility>amd64|arm64))?$
+name: Build and Publish Image (amd64)
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: 'Service directory / image name (e.g. tinyproxy); also used as the DockerHub image name'
+        required: true
+        type: string
+
+env:
+  DOCKERHUB_NAMESPACE: anthonysautomations
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    # Serialise builds per service so two runs on the same day cannot race for
+    # the same daily sequence number.
+    concurrency:
+      group: build-${{ inputs.service }}-amd64
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve next release version
+        id: version
+        run: |
+          set -euo pipefail
+          repo="${{ env.DOCKERHUB_NAMESPACE }}/${{ inputs.service }}"
+          version=$(./scripts/next-version.sh "${repo}" amd64)
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${version}-amd64" >> "$GITHUB_OUTPUT"
+
+      - name: Collect image metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          service='${{ inputs.service }}'
+
+          # The Alpine release is pinned in the Dockerfile, so read it straight
+          # from there rather than inspecting the built image.
+          alpine_version=$(sed -nE 's|^FROM alpine:([A-Za-z0-9._-]+).*|\1|p' "${service}/Dockerfile")
+          alpine_version=${alpine_version%%$'\n'*}
+          if [[ -z "${alpine_version}" ]]; then
+            echo "error: could not determine the pinned Alpine version" >&2
+            exit 1
+          fi
+
+          echo "alpine_version=${alpine_version}" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ inputs.service }}
+          file: ./${{ inputs.service }}/Dockerfile
+          platforms: linux/amd64
+          push: true
+          sbom: true
+          tags: |
+            ${{ steps.version.outputs.repo }}:${{ steps.version.outputs.tag }}
+            ${{ steps.version.outputs.repo }}:latest-amd64
+          # Full provenance lives in labels/SBOM: the tag stays short and
+          # sortable while the exact Alpine version and installed package
+          # inventory (via the SBOM attestation, generated from the image that
+          # is actually pushed) remain inspectable.
+          labels: |
+            org.opencontainers.image.title=${{ inputs.service }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+            io.anthonysautomations.alpine.version=${{ steps.meta.outputs.alpine_version }}
+          # Bake the commit into the image itself (see the Dockerfile ARG) so it
+          # is traceable from inside a running container, not only via labels.
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+
+      - name: Add build summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** ${{ steps.version.outputs.repo }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platform:** linux/amd64" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release tag:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Moving alias:** latest-amd64" >> $GITHUB_STEP_SUMMARY
+          echo "- **Alpine:** ${{ steps.meta.outputs.alpine_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Git Hash:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
