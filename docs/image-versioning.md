@@ -217,6 +217,7 @@ instead.
 | Manual build script | Same steps for the non-CI architecture, runnable from a workstation. |
 | Dockerfiles | Pinned base image; late `ARG GIT_COMMIT` / `ENV GIT_COMMIT`. |
 | Base-image updater config | Renovate (or equivalent) bumping the pinned base image and CI action versions. |
+| Updater bot workflow | Scheduled run of that updater against this repository, with a token whose capabilities are chosen per §7. |
 
 Keeping the allocator as a **script rather than inline CI steps** is the key
 structural decision: it is what makes the manual architecture reproduce CI
@@ -261,6 +262,28 @@ as a **breaking change requiring migration**, not an implementation detail —
 existing consumers must be repointed to an immutable, architecture-scoped tag
 before the old one is allowed to go stale.
 
+### Running the updater bot itself
+
+The producer repository also runs the updater (here: self-hosted Renovate in a
+scheduled workflow) to bump its own pinned base images and CI action versions.
+Credentials are the part that bites:
+
+- **The bot fails closed on a missing token.** Wiring the action to a
+  `RENOVATE_TOKEN` secret that was never created does not degrade gracefully —
+  the run aborts with `'token' MUST be passed using its input or the
+  'RENOVATE_TOKEN' environment variable`, because an unset secret expands to an
+  empty string. Either create the secret or reference the CI platform's built-in
+  token explicitly; do not leave a dangling secret reference.
+- **The built-in CI token works, with two documented limits.** Using
+  `GITHUB_TOKEN` (plus `contents: write` and `pull-requests: write`
+  permissions) needs no secret management, but (a) PRs it opens do not trigger
+  other workflows, so automerge has no CI result to wait for, and (b) it cannot
+  write files under `.github/workflows`, so CI action bumps must be applied by
+  hand.
+- **A PAT or app token buys back both**, at the cost of a credential to store
+  and rotate. Choose deliberately and record which one is in use; the two behave
+  differently enough that a reader cannot infer it from the workflow alone.
+
 ---
 
 ## 8. Failure modes and edge cases
@@ -274,6 +297,7 @@ before the old one is allowed to go stale.
 | SBOM/package inventory generation fails | Depends on tooling; must never silently produce a *wrong* value — omit or clearly mark as unavailable rather than fabricate. |
 | Working tree is dirty at manual-build time | Abort by default; require an explicit opt-in to publish with mismatched provenance. |
 | Base image pin unreadable | Abort — this indicates a malformed Dockerfile. |
+| Updater bot token missing or unset | The bot aborts before doing any work. Reference a token that actually exists (§7). |
 | One architecture lags behind | Expected. Each stream advances independently. |
 | Clock skew across builders | Use UTC everywhere; sequence numbers absorb same-day disorder. |
 

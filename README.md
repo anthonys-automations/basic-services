@@ -133,6 +133,21 @@ untracked changes, since the recorded commit would then not match what was
 actually built. Override with `ALLOW_DIRTY=1` only when that mismatch is
 acceptable (e.g. local experimentation, never for an audited release).
 
+## Dependency updates (Renovate)
+
+`.github/workflows/renovate.yml` runs a self-hosted Renovate weekly (Friday
+03:00 UTC) and on manual dispatch, keeping the pinned Alpine base images and
+GitHub Actions versions current.
+
+It authenticates with the built-in `GITHUB_TOKEN`; no secret is needed. Two
+limitations follow from that:
+
+- PRs opened by `GITHUB_TOKEN` do not trigger other workflows, so the CI checks
+  automerge would wait on never start. Merges therefore happen without a fresh
+  CI run (or need a manual push to the branch to kick one off).
+- `GITHUB_TOKEN` cannot write files under `.github/workflows`, so Actions
+  version bumps have to be applied by hand.
+
 ## Consuming these images from Kubernetes
 
 Pin an immutable, architecture-matched tag and let Renovate advance it:

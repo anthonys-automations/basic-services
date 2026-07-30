@@ -23,8 +23,11 @@ on:
   schedule:
     - cron: '0 3 * * 5'
 
+# Renovate pushes branches and opens PRs with the built-in GITHUB_TOKEN, so the
+# job needs write scopes.
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 concurrency:
   group: renovate
@@ -51,10 +54,14 @@ jobs:
           RENOVATE_REQUIRE_CONFIG: 'required'
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
         with:
-          # PAT (or GitHub App token) with contents + pull-requests write.
-          # The default GITHUB_TOKEN cannot trigger the CI workflows that
-          # automerge depends on.
-          token: ${{ secrets.RENOVATE_TOKEN }}
+          # The earlier run failed with "'token' MUST be passed using its input
+          # or the 'RENOVATE_TOKEN' environment variable" because it referenced
+          # an unset RENOVATE_TOKEN secret. This repository always uses the
+          # built-in GITHUB_TOKEN instead. Two consequences to be aware of:
+          # PRs it opens do not trigger other workflows (so automerge cannot
+          # wait on CI), and it cannot push changes to files under
+          # .github/workflows (Actions version bumps must be merged by hand).
+          token: ${{ github.token }}
 
       - name: Add run summary
         if: always()
