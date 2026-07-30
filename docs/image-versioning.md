@@ -310,6 +310,10 @@ that is absent, because nobody looks at it again. Two guards close that gap:
 Pin the validator and the run to the same updater version, otherwise the
 validation step can accept config that the run rejects.
 
+The same log is worth reusing for the job summary: emit a link for every pull
+request the run created, updated or automerged. When updates merge unattended,
+the run page is the only place an auditor can start from.
+
 ---
 
 ## 8. Failure modes and edge cases

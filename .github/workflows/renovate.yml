@@ -121,7 +121,36 @@ jobs:
       - name: Add run summary
         if: always()
         run: |
-          echo "## Renovate Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Result:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          set -euo pipefail
+
+          {
+            echo "## Renovate Summary"
+            echo "- **Repository:** ${GITHUB_REPOSITORY}"
+            echo "- **Trigger:** ${GITHUB_EVENT_NAME}"
+            echo "- **Result:** ${JOB_STATUS}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Link every PR this run touched, so an unattended (and possibly
+          # auto-merged) dependency change can be audited straight from the run.
+          if [[ -s "${RENOVATE_LOG_FILE}" ]]; then
+            prs=$(jq -rs --arg base "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull" '
+              [ .[] | select(.pr != null) | {pr: .pr, title: (.prTitle // ""), msg: .msg} ]
+              | group_by(.pr)
+              | map("- [#\(.[0].pr)](\($base)/\(.[0].pr)) \(.[0].title) — \([.[].msg] | unique | join(", "))")
+              | .[]' "${RENOVATE_LOG_FILE}")
+          else
+            prs=""
+          fi
+
+          if [[ -n "${prs}" ]]; then
+            {
+              echo
+              echo "### Pull requests"
+              echo "${prs}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- **Pull requests:** none created or updated" >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          JOB_STATUS: ${{ job.status }}

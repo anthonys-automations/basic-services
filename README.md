@@ -154,6 +154,9 @@ the run, and afterwards checks Renovate's structured log for errors and for a
 refused to do any work — an invalid config key once produced a green job that
 changed nothing.
 
+The job summary lists every PR the run created, updated or automerged, with
+links, so unattended dependency changes can be audited from the run page.
+
 ## Consuming these images from Kubernetes
 
 Pin an immutable, architecture-matched tag and let Renovate advance it:
