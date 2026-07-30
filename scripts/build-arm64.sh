@@ -184,3 +184,6 @@ docker buildx build \
     "${context_dir}"
 
 echo "==> published ${repo}:${tag} and ${repo}:latest-${arch}"
+# Same DockerHub link the CI build summary emits, so a manual arm64 release is
+# just as easy to open and verify.
+echo "==> https://hub.docker.com/layers/${repo}/${tag}/"

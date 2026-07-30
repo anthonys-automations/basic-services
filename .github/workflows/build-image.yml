@@ -118,7 +118,11 @@ jobs:
           echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository:** ${{ steps.version.outputs.repo }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Platform:** linux/amd64" >> $GITHUB_STEP_SUMMARY
-          echo "- **Release tag:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          # Link straight to the published tag on DockerHub so the artefact this
+          # run produced can be inspected without hunting for it. Only the
+          # immutable release tag is linked: the moving alias is not deployable
+          # and points somewhere else by the time anyone reads this.
+          echo "- **Release tag:** [${{ steps.version.outputs.tag }}](https://hub.docker.com/layers/${{ steps.version.outputs.repo }}/${{ steps.version.outputs.tag }}/)" >> $GITHUB_STEP_SUMMARY
           echo "- **Moving alias:** latest-amd64" >> $GITHUB_STEP_SUMMARY
           echo "- **Alpine:** ${{ steps.meta.outputs.alpine_version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Git Hash:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

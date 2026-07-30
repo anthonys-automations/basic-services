@@ -176,6 +176,11 @@ Two implementation details matter:
   every rebuild.
 - **Give the `ARG` a default** (`unknown`) so an ad-hoc local build still works.
 
+Have both the CI build summary and the manual script print a **registry link to
+the exact published tag** (e.g. `https://hub.docker.com/layers/<ns>/<image>/<tag>/`).
+Releases here are unattended and machine-named, so the one thing a human needs
+afterwards is a one-click route from the run to the artefact it produced.
+
 ### Package inventory: prefer SBOM over an independent lookup
 
 Do **not** determine installed package versions by querying a separately pulled
