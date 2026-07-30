@@ -43,8 +43,10 @@ concurrency:
 
 env:
   # Shared by the config validator and the Renovate run so both use the same
-  # release; the action's own default would otherwise drift from the validator.
-  # Kept in step with the action version's default renovate-version.
+  # release; the action's own default would otherwise drift from the validator
+  # and validation could accept config the run rejects. Pinned independently of
+  # the action's default renovate-version, so moving it is a deliberate
+  # Renovate major upgrade rather than a side effect of an action bump.
   RENOVATE_IMAGE_TAG: '43'
   # Written inside the container; /tmp is bind-mounted by the action, so the
   # verification step below can read it back on the runner.
@@ -56,7 +58,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # A run with an invalid renovate.json (e.g. the unsupported `comment`
       # key) still exits 0 from the action, so it silently did nothing.
@@ -71,7 +73,7 @@ jobs:
       - name: Run Renovate
         # v46 is the first line that runs on node24; v43 ran on node20, which
         # the runners now warn about as deprecated.
-        uses: renovatebot/github-action@v46.1.21
+        uses: renovatebot/github-action@v46.2.0
         env:
           # Restrict the run to this repository only
           RENOVATE_REPOSITORIES: ${{ github.repository }}
@@ -96,10 +98,13 @@ jobs:
           # The earlier run failed with "'token' MUST be passed using its input
           # or the 'RENOVATE_TOKEN' environment variable" because it referenced
           # an unset RENOVATE_TOKEN secret. This repository always uses the
-          # built-in GITHUB_TOKEN instead. Two consequences to be aware of:
+          # built-in GITHUB_TOKEN instead. Three consequences to be aware of:
           # its pushes never start a workflow run (hence the explicit dispatch
-          # step below), and it cannot write files under .github/workflows
-          # (Actions version bumps are routed to the dependency dashboard).
+          # step below), it cannot write files under .github/workflows (Actions
+          # version bumps are routed to the dependency dashboard), and it
+          # cannot read Dependabot alerts (so `vulnerabilityAlerts` is disabled
+          # in renovate.json to avoid a permanent "Cannot access vulnerability
+          # alerts" warning).
           token: ${{ github.token }}
 
       # Renovate exits 0 even when the repository run ends in an error state
@@ -164,7 +169,8 @@ jobs:
 
             # A branch cut before validate-build.yml existed does not contain
             # the workflow file, so the dispatch is rejected; Renovate rebases
-            # it onto main on a later run and it becomes dispatchable then.
+            # it onto the base branch on a later run and it becomes
+            # dispatchable then.
             if gh workflow run validate-build.yml --ref "${branch}"; then
               echo "${branch}@${sha:0:7}: validation dispatched"
             else

@@ -144,7 +144,7 @@ acceptable (e.g. local experimentation, never for an audited release).
 03:00 UTC) and on manual dispatch, keeping the pinned Alpine base images and
 GitHub Actions versions current.
 
-It authenticates with the built-in `GITHUB_TOKEN`; no secret is needed. Two
+It authenticates with the built-in `GITHUB_TOKEN`; no secret is needed. Three
 consequences follow from that:
 
 - Pushes and PRs made with `GITHUB_TOKEN` never start a workflow run, so a
@@ -156,6 +156,17 @@ consequences follow from that:
   `.github/workflows`. GitHub Actions updates are therefore listed on the
   dependency dashboard rather than raised as branches, and have to be applied by
   hand.
+- `GITHUB_TOKEN` cannot read Dependabot alerts, so `vulnerabilityAlerts` is
+  disabled in `renovate.json`; leaving it on only logged a warning every run and
+  never produced an extra PR. Alerts do not cover the pinned Alpine base images
+  anyway.
+
+All Dockerfile updates are grouped into a single `renovate/*` branch (including
+major bumps, via `separateMajorMinor: false`), so a run produces one PR, one
+`validate-build.yml` dispatch and one merge. `prHourlyLimit` is switched off for
+the same reason: its default of 2 counts every PR opened in the current clock
+hour, including closed ones, and once hit Renovate creates the branch but
+silently skips the PR.
 
 The workflow validates `renovate.json` with `renovate-config-validator` before
 the run, and afterwards checks Renovate's structured log for errors and for a

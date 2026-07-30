@@ -280,12 +280,16 @@ Credentials are the part that bites:
   'RENOVATE_TOKEN' environment variable`, because an unset secret expands to an
   empty string. Either create the secret or reference the CI platform's built-in
   token explicitly; do not leave a dangling secret reference.
-- **The built-in CI token works, with two documented limits.** Using
+- **The built-in CI token works, with three documented limits.** Using
   `GITHUB_TOKEN` (plus `contents: write` and `pull-requests: write`
   permissions) needs no secret management, but (a) PRs it opens do not trigger
-  other workflows, so automerge has no CI result to wait for, and (b) it cannot
+  other workflows, so automerge has no CI result to wait for, (b) it cannot
   write files under `.github/workflows`, so CI action bumps must be applied by
-  hand.
+  hand, and (c) it cannot read the platform's vulnerability alerts — that is a
+  GitHub App permission with no equivalent key in a workflow's `permissions:`
+  block. Leave alert-driven updates (`vulnerabilityAlerts`) switched off unless
+  a token that can actually read them is in use, otherwise every run logs a
+  warning that no permission change can clear.
 - **A PAT or app token buys back both**, at the cost of a credential to store
   and rotate. Choose deliberately and record which one is in use; the two behave
   differently enough that a reader cannot infer it from the workflow alone.
@@ -325,6 +329,27 @@ The token limit bites once more on the CI-workflow manager: updates to files
 under the workflow directory cannot be pushed at all. Route those to the
 dependency dashboard for manual application rather than letting the bot retry a
 push that is rejected on every run.
+
+### Group updates so a run costs one validation build
+
+Every branch the bot opens costs a dispatched validation build and a merge, so
+group everything it may actually branch into a single branch and pull request.
+Disable the updater's default split of major updates into their own branch
+(`separateMajorMinor: false`) as well, or a major bump escapes the group.
+
+Name the managers in that group explicitly rather than matching everything: the
+CI-workflow manager has to stay outside it, because a change it cannot push
+would fail the shared branch for every other update travelling with it.
+
+Grouping also removes the need for the updater's PR rate limit, which is worth
+switching off deliberately (`prHourlyLimit: 0`). Its default counts every PR
+opened in the current clock hour — *including ones already closed*, such as the
+per-dependency PRs pruned when a config moves to a single group. Once the limit
+is reached the updater still creates the branch but silently skips the PR, and
+because that is a `debug`-level event an `info`-level run shows only
+`Branch created` and the log assertions above still pass. If a branch ever
+exists without a pull request, check the dependency dashboard: rate-limited
+updates are listed there with a checkbox that forces creation.
 
 ### The updater exits green when it does nothing
 
@@ -369,6 +394,7 @@ the run page is the only place an auditor can start from.
 | Updater bot token missing or unset | The bot aborts before doing any work. Reference a token that actually exists (§7). |
 | Updater bot config invalid | The bot exits 0 having done nothing. Validate config in a preceding step and assert on the run result (§7). |
 | Updater PR waits on checks that never run | Same silent stall. Dispatch a build-only validation workflow on the bot's branches so a real check reports (§7). |
+| Updater branch exists but no PR was opened | Almost always the hourly PR rate limit, which is only logged at debug level. Switch it off or force creation from the dependency dashboard (§7). |
 | One architecture lags behind | Expected. Each stream advances independently. |
 | Clock skew across builders | Use UTC everywhere; sequence numbers absorb same-day disorder. |
 
