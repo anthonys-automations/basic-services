@@ -4,12 +4,14 @@ FROM alpine:3.22.1
 
 # postfix:                       the MTA itself
 # openssl:                       STARTTLS support and ad-hoc cert ops
-# cyrus-sasl + plain/login:      SMTP *client* SASL auth to upstream relayhost
+# cyrus-sasl (+ login plugin):   SMTP *client* SASL auth to upstream relayhost.
+#   Build was failing on `cyrus-sasl-plain (no such package)`: Alpine has no
+#   such subpackage - the PLAIN mechanism plugin is shipped inside the base
+#   `cyrus-sasl` package, only LOGIN/CRAM-MD5/etc. are split out. Dropped it.
 RUN apk update && apk add --no-cache \
         postfix \
         openssl \
         cyrus-sasl \
-        cyrus-sasl-plain \
         cyrus-sasl-login
 
 # Self-signed TLS cert generation + optional sasl_passwd postmap, then
