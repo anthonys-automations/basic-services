@@ -4,11 +4,11 @@
     "config:recommended",
     ":dependencyDashboard"
   ],
-  "description": "Config for the standalone Renovate run in .github/workflows/renovate.yml. Automerge is enabled because the Alpine base images are now pinned to explicit releases and need automated bumps. No 'schedule' here on purpose: run timing is owned solely by the workflow cron, so this config never blocks an on-demand workflow_dispatch run. Note: 'comment' is not a Renovate option - using it aborted the whole run with a config-validation error.",
+  "description": "Config for the standalone Renovate run in .github/workflows/renovate.yml. Automerge is enabled because the Alpine base images are now pinned to explicit releases and need automated bumps. No 'schedule' here on purpose: run timing is owned solely by the workflow cron, so this config never blocks an on-demand workflow_dispatch run. 'platformAutomerge' is off because GitHub's auto-merge queue only releases a PR once required checks pass, which would need branch protection; instead the workflow dispatches .github/workflows/validate-build.yml on each renovate/* branch (a bot push starts no workflow run, an explicit dispatch does) and Renovate merges once that check is green - usually on the following run. Note: 'comment' is not a Renovate option - using it aborted an entire run with a config-validation error, so annotations must live in this 'description' field.",
   "timezone": "Etc/UTC",
   "automerge": true,
   "automergeType": "pr",
-  "platformAutomerge": true,
+  "platformAutomerge": false,
   "prCreation": "immediate",
   "rebaseWhen": "behind-base-branch",
   "labels": [
@@ -26,11 +26,12 @@
       "automerge": true
     },
     {
-      "description": "Keep GitHub Actions used by the build/CI pipelines current",
+      "description": "GitHub Actions updates are listed on the dependency dashboard instead of raising branches: GITHUB_TOKEN has no 'workflow' scope, so pushing a change under .github/workflows is rejected and the run would fail on every attempt. Tick an item on the dashboard only if you intend to apply that bump by hand.",
       "matchManagers": [
         "github-actions"
       ],
-      "automerge": true
+      "automerge": false,
+      "dependencyDashboardApproval": true
     }
   ],
   "vulnerabilityAlerts": {

@@ -105,6 +105,11 @@ workflows (`build-exim.yml`, `build-postfix.yml`, `build-tinyproxy.yml`) supply 
 inputs and triggers, and `ci.yml` invokes them on relevant path changes. Each also
 runs weekly and on manual dispatch.
 
+`.github/workflows/validate-build.yml` builds all three images **without
+publishing**. It is manually dispatchable and is what the Renovate workflow
+triggers on dependency branches, so a base-image bump is built before it merges
+without ever allocating a release version from an unmerged branch.
+
 ## arm64 builds (manual)
 
 arm64 images are built by hand on an irregular schedule using the same contract:
@@ -140,13 +145,17 @@ acceptable (e.g. local experimentation, never for an audited release).
 GitHub Actions versions current.
 
 It authenticates with the built-in `GITHUB_TOKEN`; no secret is needed. Two
-limitations follow from that:
+consequences follow from that:
 
-- PRs opened by `GITHUB_TOKEN` do not trigger other workflows, so the CI checks
-  automerge would wait on never start. Merges therefore happen without a fresh
-  CI run (or need a manual push to the branch to kick one off).
-- `GITHUB_TOKEN` cannot write files under `.github/workflows`, so Actions
-  version bumps have to be applied by hand.
+- Pushes and PRs made with `GITHUB_TOKEN` never start a workflow run, so a
+  `renovate/*` branch would carry no check at all and automerge would wait
+  forever. An explicitly dispatched run *is* allowed, so the workflow triggers
+  `validate-build.yml` (build-only, no push to DockerHub) on each Renovate
+  branch; Renovate merges the PR on a later run once that check is green.
+- `GITHUB_TOKEN` has no `workflow` scope and cannot write files under
+  `.github/workflows`. GitHub Actions updates are therefore listed on the
+  dependency dashboard rather than raised as branches, and have to be applied by
+  hand.
 
 The workflow validates `renovate.json` with `renovate-config-validator` before
 the run, and afterwards checks Renovate's structured log for errors and for a

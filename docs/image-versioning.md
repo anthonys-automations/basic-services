@@ -214,6 +214,7 @@ instead.
 | Version allocator script | Implements §4. Shared verbatim by CI and manual builds so both obey one contract. |
 | Reusable CI workflow | Automated build for the CI-native architecture: allocate version, collect metadata, build, push release tag + moving alias. |
 | Per-service CI wrappers | Triggers only (schedule / manual / change detection); pass just the service name — derive the registry repository and any other per-service input from it wherever they follow the same pattern, to avoid inputs that only ever repeat the service name. |
+| Build-only validation workflow | Manually dispatchable build of every service without publishing; supplies the check that gates automerge on updater branches (§7). |
 | Manual build script | Same steps for the non-CI architecture, runnable from a workstation. |
 | Dockerfiles | Pinned base image; late `ARG GIT_COMMIT` / `ENV GIT_COMMIT`. |
 | Base-image updater config | Renovate (or equivalent) bumping the pinned base image and CI action versions. |
@@ -287,6 +288,39 @@ Credentials are the part that bites:
   a dependency-dashboard issue requires issue-write permission, and without it
   the bot merely logs an authorization warning.
 
+### Make automerge consistent with what the token can trigger
+
+Automerge that waits for checks which will never run is automerge that never
+happens — and it fails quietly: the run stays green, logging only that it
+updated the branch, while the pull request sits open indefinitely.
+
+If the bot uses the CI platform's built-in token, its pushes and pull requests
+raise no workflow runs, so the branch has no check results at all. The fix is
+not to switch automerge off or to skip tests — an unattended base-image bump is
+exactly the change that should be built before it merges — but to trigger the
+check deliberately:
+
+1. **Provide a build-only validation workflow** that is manually dispatchable
+   and does *not* publish. The release workflow must never run from an unmerged
+   branch: it would allocate a version and push an image for code that was
+   never merged.
+2. **Dispatch it from the updater job** on every branch the bot owns, granting
+   that job permission to start workflows. An API-triggered dispatch is exempt
+   from the rule that suppresses runs for bot-authored pushes, so the resulting
+   check does land on the branch head.
+3. **Let the updater do the merge** once it sees that check pass. Delegating to
+   the platform's auto-merge queue instead only works if the check is marked
+   *required*, which needs branch protection.
+
+The merge therefore happens on the run *after* the one that opened the branch,
+which is fine for a weekly cadence. Skip re-dispatching when the branch head
+already has a validation check, or every run queues a duplicate build.
+
+The token limit bites once more on the CI-workflow manager: updates to files
+under the workflow directory cannot be pushed at all. Route those to the
+dependency dashboard for manual application rather than letting the bot retry a
+push that is rejected on every run.
+
 ### The updater exits green when it does nothing
 
 Renovate returns exit code 0 for repository-level failures — an invalid config
@@ -329,6 +363,7 @@ the run page is the only place an auditor can start from.
 | Base image pin unreadable | Abort — this indicates a malformed Dockerfile. |
 | Updater bot token missing or unset | The bot aborts before doing any work. Reference a token that actually exists (§7). |
 | Updater bot config invalid | The bot exits 0 having done nothing. Validate config in a preceding step and assert on the run result (§7). |
+| Updater PR waits on checks that never run | Same silent stall. Dispatch a build-only validation workflow on the bot's branches so a real check reports (§7). |
 | One architecture lags behind | Expected. Each stream advances independently. |
 | Clock skew across builders | Use UTC everywhere; sequence numbers absorb same-day disorder. |
 
