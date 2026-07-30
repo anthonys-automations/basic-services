@@ -148,6 +148,12 @@ limitations follow from that:
 - `GITHUB_TOKEN` cannot write files under `.github/workflows`, so Actions
   version bumps have to be applied by hand.
 
+The workflow validates `renovate.json` with `renovate-config-validator` before
+the run, and afterwards checks Renovate's structured log for errors and for a
+`done` repository result. Both exist because Renovate exits 0 even when it
+refused to do any work — an invalid config key once produced a green job that
+changed nothing.
+
 ## Consuming these images from Kubernetes
 
 Pin an immutable, architecture-matched tag and let Renovate advance it:

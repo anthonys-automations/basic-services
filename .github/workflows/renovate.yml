@@ -24,14 +24,25 @@ on:
     - cron: '0 3 * * 5'
 
 # Renovate pushes branches and opens PRs with the built-in GITHUB_TOKEN, so the
-# job needs write scopes.
+# job needs write scopes. `issues: write` is for the dependency dashboard issue
+# (`:dependencyDashboard` in renovate.json); without it Renovate only logs
+# "Could not ensure issue: integration-unauthorized".
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 concurrency:
   group: renovate
   cancel-in-progress: false
+
+env:
+  # Shared by the config validator and the Renovate run so both use the same
+  # release; the action's own default would otherwise drift from the validator.
+  RENOVATE_IMAGE_TAG: '41'
+  # Written inside the container; /tmp is bind-mounted by the action, so the
+  # verification step below can read it back on the runner.
+  RENOVATE_LOG_FILE: /tmp/renovate-log.ndjson
 
 jobs:
   renovate:
@@ -40,6 +51,16 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # A run with an invalid renovate.json (e.g. the unsupported `comment`
+      # key) still exits 0 from the action, so it silently did nothing.
+      # Validate first so bad config turns the job red immediately.
+      - name: Validate Renovate configuration
+        run: |
+          docker run --rm \
+            --volume "${{ github.workspace }}:/usr/src/app" \
+            "ghcr.io/renovatebot/renovate:${RENOVATE_IMAGE_TAG}" \
+            renovate-config-validator --strict
 
       - name: Run Renovate
         uses: renovatebot/github-action@v43.0.19
@@ -53,7 +74,14 @@ jobs:
           RENOVATE_ONBOARDING: 'false'
           RENOVATE_REQUIRE_CONFIG: 'required'
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
+          LOG_FILE: ${{ env.RENOVATE_LOG_FILE }}
+          LOG_FILE_LEVEL: info
         with:
+          renovate-version: ${{ env.RENOVATE_IMAGE_TAG }}
+          # Same as the action's default allow-list (RENOVATE_*, LOG_LEVEL,
+          # GITHUB_COM_TOKEN, NODE_OPTIONS, proxy vars) plus LOG_FILE*, which
+          # has to be added explicitly or no log file is produced to inspect.
+          env-regex: '^(?:RENOVATE_\w+|LOG_LEVEL|LOG_FILE|LOG_FILE_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|(?:HTTPS?|NO)_PROXY|(?:https?|no)_proxy)$'
           # The earlier run failed with "'token' MUST be passed using its input
           # or the 'RENOVATE_TOKEN' environment variable" because it referenced
           # an unset RENOVATE_TOKEN secret. This repository always uses the
@@ -62,6 +90,33 @@ jobs:
           # wait on CI), and it cannot push changes to files under
           # .github/workflows (Actions version bumps must be merged by hand).
           token: ${{ github.token }}
+
+      # Renovate exits 0 even when the repository run ends in an error state
+      # (config-validation, auth failures, ...), which previously showed up as a
+      # green job that had done nothing. Inspect the structured log and fail.
+      - name: Verify Renovate run
+        run: |
+          set -euo pipefail
+
+          if [[ ! -s "${RENOVATE_LOG_FILE}" ]]; then
+            echo "::error::Renovate produced no log file at ${RENOVATE_LOG_FILE}; cannot confirm it ran."
+            exit 1
+          fi
+
+          # bunyan levels: 50 = error, 60 = fatal.
+          errors=$(jq -s '[.[] | select(.level >= 50)] | length' "${RENOVATE_LOG_FILE}")
+          if [[ "${errors}" -gt 0 ]]; then
+            echo "::error::Renovate logged ${errors} error(s):"
+            jq -rs '.[] | select(.level >= 50) | "  \(.msg)"' "${RENOVATE_LOG_FILE}"
+            exit 1
+          fi
+
+          result=$(jq -rs 'last(.[] | select(.msg == "Repository finished") | .result) // "missing"' "${RENOVATE_LOG_FILE}")
+          echo "Repository result: ${result}"
+          if [[ "${result}" != "done" ]]; then
+            echo "::error::Renovate finished with result '${result}' instead of 'done'."
+            exit 1
+          fi
 
       - name: Add run summary
         if: always()

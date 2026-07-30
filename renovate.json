@@ -4,7 +4,7 @@
     "config:recommended",
     ":dependencyDashboard"
   ],
-  "comment": "Config for the standalone Renovate run in .github/workflows/renovate.yml. Automerge is enabled because the Alpine base images are now pinned to explicit releases and need automated bumps. No 'schedule' here on purpose: run timing is owned solely by the workflow cron, so this config never blocks an on-demand workflow_dispatch run.",
+  "description": "Config for the standalone Renovate run in .github/workflows/renovate.yml. Automerge is enabled because the Alpine base images are now pinned to explicit releases and need automated bumps. No 'schedule' here on purpose: run timing is owned solely by the workflow cron, so this config never blocks an on-demand workflow_dispatch run. Note: 'comment' is not a Renovate option - using it aborted the whole run with a config-validation error.",
   "timezone": "Etc/UTC",
   "automerge": true,
   "automergeType": "pr",

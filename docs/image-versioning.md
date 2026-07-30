@@ -283,6 +283,32 @@ Credentials are the part that bites:
 - **A PAT or app token buys back both**, at the cost of a credential to store
   and rotate. Choose deliberately and record which one is in use; the two behave
   differently enough that a reader cannot infer it from the workflow alone.
+- **Grant the bot whatever its side effects need**, not just repository write:
+  a dependency-dashboard issue requires issue-write permission, and without it
+  the bot merely logs an authorization warning.
+
+### The updater exits green when it does nothing
+
+Renovate returns exit code 0 for repository-level failures — an invalid config
+key, an auth rejection — so the scheduled job reports success while having made
+no updates at all. A dependency updater that fails silently is worse than one
+that is absent, because nobody looks at it again. Two guards close that gap:
+
+1. **Validate the config before running.** Run the updater's own config
+   validator (`renovate-config-validator --strict`) as a preceding step, so a
+   malformed option fails the job outright. This also catches the trap that JSON
+   has no comment syntax: an explanatory `"comment"` key is *not* ignored, it is
+   rejected as an unknown option. Use the schema's own annotation field
+   (`description`) instead.
+2. **Assert on the run result afterwards.** Have the updater write a structured
+   log (`LOG_FILE`) to a path shared with the runner, then fail the job if any
+   record is at error level or the repository result is not the success value.
+   Note the CI action only forwards an allow-listed set of environment variables
+   into its container, so the log-file variables must be added to that list
+   explicitly (`env-regex`) or no log appears.
+
+Pin the validator and the run to the same updater version, otherwise the
+validation step can accept config that the run rejects.
 
 ---
 
@@ -298,6 +324,7 @@ Credentials are the part that bites:
 | Working tree is dirty at manual-build time | Abort by default; require an explicit opt-in to publish with mismatched provenance. |
 | Base image pin unreadable | Abort — this indicates a malformed Dockerfile. |
 | Updater bot token missing or unset | The bot aborts before doing any work. Reference a token that actually exists (§7). |
+| Updater bot config invalid | The bot exits 0 having done nothing. Validate config in a preceding step and assert on the run result (§7). |
 | One architecture lags behind | Expected. Each stream advances independently. |
 | Clock skew across builders | Use UTC everywhere; sequence numbers absorb same-day disorder. |
 
