@@ -1,18 +1,22 @@
-# Reusable pipeline that builds and publishes a single service image for
-# linux/amd64.
+# Reusable pipeline that builds and publishes a single service image as a
+# multi-architecture manifest (linux/amd64 + linux/arm64).
 #
 # Introduced to replace the three near-identical per-service workflows and to
 # implement the agreed Docker tag strategy: downstream Kubernetes repositories
-# track these images with their own Renovate, so releases must be immutable,
-# sortable and architecture-scoped.
+# track these images with their own Renovate, so releases must be immutable and
+# sortable.
 #
 # Tags published here:
-#   <YYYY>.<MM>.<DD>.<N>-amd64   immutable release, this is what k8s pins
-#   latest-amd64                 moving alias, convenience only - never deploy it
+#   <YYYY>.<MM>.<DD>.<N>   immutable release manifest, this is what k8s pins
+#   latest                 moving alias, convenience only - never deploy it
 #
-# The unsuffixed `latest` / version tags are deliberately NOT published by this
-# workflow. They are reserved for a promoted multi-architecture manifest, so a
-# mixed-architecture cluster can never be handed an amd64-only image.
+# Architecture safety is the reason for the three-job shape. Each architecture
+# builds natively on its own GitHub-hosted runner and pushes *untagged*, by
+# digest only; the publish job is the only thing that ever creates a tag, and it
+# depends on every build job succeeding. So if one architecture fails, the
+# release simply does not happen: no tag moves, and downstream Renovate sees no
+# update rather than an update it cannot run on every node. An orphan untagged
+# digest is invisible to tag listings and harmless.
 #
 # Package inventory is not queried from an independent container before the
 # build (that could drift from what actually gets installed, since Alpine's
@@ -21,8 +25,8 @@
 # `docker buildx imagetools inspect --format '{{ json .SBOM }}' <repo>:<tag>`.
 #
 # Downstream Renovate configuration (in the consuming k8s repo):
-#   # renovate: datasource=docker depName=<repo> versioning=regex:^(?<major>\d{4})\.(?<minor>\d{2})\.(?<patch>\d{2})\.(?<build>\d+)(?:-(?<compatibility>amd64|arm64))?$
-name: Build and Publish Image (amd64)
+#   # renovate: datasource=docker depName=<repo> versioning=regex:^(?<major>\d{4})\.(?<minor>\d{2})\.(?<patch>\d{2})\.(?<build>\d+)$
+name: Build and Publish Image
 
 on:
   workflow_call:
@@ -34,39 +38,41 @@ on:
 
 env:
   DOCKERHUB_NAMESPACE: anthonysautomations
+  # The publish guard fails closed if the build matrix drifts from this contract.
+  EXPECTED_PLATFORMS: linux/amd64,linux/arm64
+
+# Serialise the whole release per service so two runs on the same day cannot
+# race for the same daily sequence number, and so two publish jobs cannot
+# interleave their tag pushes.
+concurrency:
+  group: build-${{ inputs.service }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-publish:
+  # Version and metadata are allocated once and shared by every architecture, so
+  # each per-arch image carries byte-identical labels and the manifest describes
+  # a single release rather than two coincidental builds.
+  prepare:
     runs-on: ubuntu-latest
-
-    # Serialise builds per service so two runs on the same day cannot race for
-    # the same daily sequence number.
-    concurrency:
-      group: build-${{ inputs.service }}-amd64
-      cancel-in-progress: false
+    outputs:
+      repo: ${{ steps.version.outputs.repo }}
+      version: ${{ steps.version.outputs.version }}
+      base_image: ${{ steps.meta.outputs.base_image }}
+      created: ${{ steps.meta.outputs.created }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
 
       - name: Resolve next release version
         id: version
         run: |
           set -euo pipefail
           repo="${{ env.DOCKERHUB_NAMESPACE }}/${{ inputs.service }}"
-          version=$(./scripts/next-version.sh "${repo}" amd64)
+          # No arch argument: allocate from the unsuffixed, multi-arch stream.
+          version=$(./scripts/next-version.sh "${repo}")
           echo "repo=${repo}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "tag=${version}-amd64" >> "$GITHUB_OUTPUT"
 
       - name: Collect image metadata
         id: meta
@@ -85,43 +91,168 @@ jobs:
           echo "base_image=${base_image}" >> "$GITHUB_OUTPUT"
           echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push Docker image
+  build:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    strategy:
+      # Let the healthy architecture finish: its logs are the useful diagnostic
+      # when the other one fails, and nothing is published either way.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: ./${{ inputs.service }}
           file: ./${{ inputs.service }}/Dockerfile
-          platforms: linux/amd64
-          push: true
+          platforms: ${{ matrix.platform }}
           sbom: true
-          tags: |
-            ${{ steps.version.outputs.repo }}:${{ steps.version.outputs.tag }}
-            ${{ steps.version.outputs.repo }}:latest-amd64
+          # `push-by-digest` deliberately publishes no tag: an incomplete
+          # release must leave nothing that Renovate or a `docker pull` can
+          # find. The publish job below assembles the tags.
+          outputs: type=image,name=${{ needs.prepare.outputs.repo }},push-by-digest=true,name-canonical=true,push=true
           # Full provenance lives in labels/SBOM: the tag stays short and
           # sortable while the exact base image and installed package
           # inventory (via the SBOM attestation, generated from the image that
           # is actually pushed) remain inspectable.
           labels: |
             org.opencontainers.image.title=${{ inputs.service }}
-            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
-            io.anthonysautomations.base.image=${{ steps.meta.outputs.base_image }}
+            org.opencontainers.image.created=${{ needs.prepare.outputs.created }}
+            io.anthonysautomations.base.image=${{ needs.prepare.outputs.base_image }}
           # Bake the commit into the image itself (see the Dockerfile ARG) so it
           # is traceable from inside a running container, not only via labels.
           build-args: |
             GIT_COMMIT=${{ github.sha }}
 
+      - name: Export digest
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          digest='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    # No `if: always()` - this dependency is the gate. If any architecture
+    # failed, was cancelled, or never got a runner, no tag is created at all.
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Verify and create release manifest
+        run: |
+          set -euo pipefail
+          repo='${{ needs.prepare.outputs.repo }}'
+          version='${{ needs.prepare.outputs.version }}'
+
+          expected_count=$(awk -F, '{ print NF }' <<< "${EXPECTED_PLATFORMS}")
+          digest_count=$(find /tmp/digests -type f | wc -l)
+          if [[ "${digest_count}" -ne "${expected_count}" ]]; then
+            echo "error: expected ${expected_count} architecture digests, found ${digest_count}" >&2
+            exit 1
+          fi
+
+          # The artefact file names are the bare digests pushed by the build jobs.
+          refs=()
+          for digest_file in /tmp/digests/*; do
+            refs+=("${repo}@sha256:$(basename "${digest_file}")")
+          done
+
+          create_args=(
+            --annotation "index:org.opencontainers.image.title=${{ inputs.service }}"
+            --annotation "index:org.opencontainers.image.version=${version}"
+            --annotation "index:org.opencontainers.image.revision=${{ github.sha }}"
+            --annotation "index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}"
+            --annotation "index:org.opencontainers.image.created=${{ needs.prepare.outputs.created }}"
+          )
+
+          docker buildx imagetools create --dry-run \
+            "${create_args[@]}" "${refs[@]}" > /tmp/release-manifest.json
+          covered_platforms=$(jq -r '[.manifests[] | select(.platform != null and .platform.os != "unknown")
+                     | .platform.os + "/" + .platform.architecture]
+                     | unique | join(",")' /tmp/release-manifest.json)
+          expected_platforms=$(tr ',' '\n' <<< "${EXPECTED_PLATFORMS}" | sort | paste -sd, -)
+
+          if [[ "${covered_platforms}" != "${expected_platforms}" ]]; then
+            echo "error: candidate manifest covers [${covered_platforms}], expected [${expected_platforms}]" >&2
+            exit 1
+          fi
+
+          docker buildx imagetools create --tag "${repo}:${version}" \
+            "${create_args[@]}" "${refs[@]}"
+          echo "published: ${repo}:${version} covers ${covered_platforms}"
+
+      - name: Move the latest alias
+        # Only after verification, and built from the verified index, so the
+        # moving alias can never point at something the guard above rejected.
+        run: |
+          set -euo pipefail
+          repo='${{ needs.prepare.outputs.repo }}'
+          docker buildx imagetools create \
+            --tag "${repo}:latest" \
+            "${repo}:${{ needs.prepare.outputs.version }}"
+
       - name: Add build summary
         run: |
-          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Repository:** ${{ steps.version.outputs.repo }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Platform:** linux/amd64" >> $GITHUB_STEP_SUMMARY
           # Link straight to the published tag on DockerHub so the artefact this
           # run produced can be inspected without hunting for it. Only the
           # immutable release tag is linked: the moving alias is not deployable
           # and points somewhere else by the time anyone reads this.
-          echo "- **Release tag:** [${{ steps.version.outputs.tag }}](https://hub.docker.com/layers/${{ steps.version.outputs.repo }}/${{ steps.version.outputs.tag }}/)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Moving alias:** latest-amd64" >> $GITHUB_STEP_SUMMARY
-          echo "- **Base image:** ${{ steps.meta.outputs.base_image }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Git Hash:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Build Summary"
+            echo "- **Repository:** ${{ needs.prepare.outputs.repo }}"
+            echo "- **Platforms:** ${EXPECTED_PLATFORMS}"
+            echo "- **Release tag:** [${{ needs.prepare.outputs.version }}](https://hub.docker.com/layers/${{ needs.prepare.outputs.repo }}/${{ needs.prepare.outputs.version }}/)"
+            echo "- **Moving alias:** latest"
+            echo "- **Base image:** ${{ needs.prepare.outputs.base_image }}"
+            echo "- **Git Hash:** ${{ github.sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"

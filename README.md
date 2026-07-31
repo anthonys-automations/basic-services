@@ -8,27 +8,23 @@ up newer Alpine packages, produced without human review. The tag strategy below
 exists so a separate Kubernetes repository can track these rebuilds safely with
 its own Renovate.
 
-> **Breaking change:** this repository no longer publishes a plain `latest` tag.
-> It previously did; that tag is now frozen at its last pre-migration value and
-> will not receive further updates. If anything still deploys
-> `anthonysautomations/{exim,postfix,tinyproxy,sandbox-browser}:latest`, repoint it to an
-> immutable, architecture-scoped tag (see [Consuming these images from
-> Kubernetes](#consuming-these-images-from-kubernetes)) before relying on new
-> releases.
+> **Note:** the `latest` tag is published again, now as a multi-architecture
+> manifest, after a period in which only architecture-suffixed tags were
+> produced. It remains a convenience alias only; deploy an immutable
+> `<YYYY>.<MM>.<DD>.<N>` tag instead (see [Consuming these images from
+> Kubernetes](#consuming-these-images-from-kubernetes)).
 
 ## Tag contract
 
 ```text
-<YYYY>.<MM>.<DD>.<N>-<arch>      e.g. 2026.07.30.1-amd64
+<YYYY>.<MM>.<DD>.<N>      e.g. 2026.07.30.1
 ```
 
 | Tag | Mutability | Purpose |
 | --- | --- | --- |
-| `2026.07.30.1-amd64` | immutable | amd64 release. Pin this in Kubernetes. |
-| `2026.07.30.1-arm64` | immutable | arm64 release. Pin this in Kubernetes. |
-| `latest-amd64` | moving | convenience alias, not for deployment |
-| `latest-arm64` | moving | convenience alias, not for deployment |
-| `latest` / unsuffixed versions | reserved | promoted multi-architecture manifest |
+| `2026.07.30.1` | immutable | multi-architecture release (amd64 + arm64). Pin this in Kubernetes. |
+| `latest` | moving | convenience alias, not for deployment |
+| `<version>-<arch>` | immutable | out-of-band single-architecture build only (see below) |
 
 Why this shape:
 
@@ -36,11 +32,18 @@ Why this shape:
   this repository. A package version alone would not: `tinyproxy` can stay at
   `1.11.2-r3` while `openssl` or `musl` underneath it receives a security fix.
 - The **daily sequence** allows more than one build per day.
-- The **architecture suffix** is read by Renovate as its `compatibility` group, so
-  an amd64 deployment is never offered an arm64 image, and vice versa.
+- **One tag serves every architecture.** The release tag is a manifest list, so a
+  node pulls the image matching its own platform and consumers need no
+  architecture-specific configuration.
 - The exact base image is kept in a **label**, and the full package inventory
   in an **SBOM attestation**, rather than in the tag, so the tag stays short and
   reliably sortable while remaining fully inspectable.
+
+A release tag is only created once **every** architecture has built and pushed
+successfully, and the assembled manifest is verified to cover them all before
+`latest` is moved. If a build runner is unavailable, no tag appears at all: a
+consumer's Renovate then sees no update, rather than an update that would fail
+to pull on half the cluster.
 
 The full rationale, algorithm, and a re-implementation guide for reusing this
 approach on another product are in [docs/image-versioning.md](docs/image-versioning.md).
@@ -69,13 +72,13 @@ pushed:
 
 ```bash
 docker buildx imagetools inspect --format '{{ json .SBOM }}' \
-    anthonysautomations/tinyproxy:2026.07.30.1-amd64
+    anthonysautomations/tinyproxy:2026.07.30.1
 ```
 
 Inspect the labels with:
 
 ```bash
-docker buildx imagetools inspect anthonysautomations/tinyproxy:2026.07.30.1-amd64
+docker buildx imagetools inspect anthonysautomations/tinyproxy:2026.07.30.1
 ```
 
 ### Tracing a running container to a commit
@@ -98,21 +101,38 @@ publish in that case unless `ALLOW_DIRTY=1` is set — see below). For a binding
 audit record, pin and reason about the immutable **image digest**, not the env
 var or label alone.
 
-## amd64 builds (automated)
+## Builds
 
 `.github/workflows/build-image.yml` is a reusable workflow; the per-service
 workflows (`build-exim.yml`, `build-postfix.yml`, `build-tinyproxy.yml`,
 `build-sandbox-browser.yml`) supply the inputs and triggers, and `ci.yml` invokes
 them on relevant path changes. Each also runs weekly and on manual dispatch.
 
-`.github/workflows/validate-build.yml` builds all four images **without
-publishing**. It is manually dispatchable and is what the Renovate workflow
-triggers on dependency branches, so a base-image bump is built before it merges
-without ever allocating a release version from an unmerged branch.
+It runs in three stages:
 
-## arm64 builds (manual)
+1. **prepare** — allocates one version and one set of metadata for the whole
+   release, so every architecture carries identical labels.
+2. **build** — one job per architecture, each on a native GitHub-hosted runner
+   (`ubuntu-latest` for amd64, `ubuntu-24.04-arm` for arm64). These push **by
+   digest with no tag at all**, so an incomplete release leaves nothing that
+   Renovate or a `docker pull` can find.
+3. **publish** — assembles the digests into one manifest list, verifies it covers
+   every expected platform, and only then tags `<version>` and moves `latest`.
 
-arm64 images are built by hand on an irregular schedule using the same contract:
+The publish job depends on all build jobs succeeding, with no `if: always()`.
+That dependency is the safety mechanism: a failed arm64 build produces no release
+rather than an amd64-only one.
+
+`.github/workflows/validate-build.yml` builds all four images on both
+architectures **without publishing**. It is manually dispatchable and is what the
+Renovate workflow triggers on dependency branches, so a base-image bump is built
+for every architecture before it merges without ever allocating a release
+version from an unmerged branch.
+
+## Out-of-band single-architecture builds
+
+`scripts/build-arm64.sh` builds and publishes arm64 by hand. It is an escape
+hatch, not the normal route — use it when the pipeline itself is unavailable:
 
 ```bash
 export DOCKERHUB_USERNAME=...
@@ -129,9 +149,10 @@ buildx builder capable of `linux/arm64` — either a native arm64 host or qemu:
 docker run --privileged --rm tonistiigi/binfmt --install arm64
 ```
 
-arm64 versions are allocated independently of amd64. An arm64 build made weeks
-after an amd64 build resolves different package contents, so it gets its own
-version rather than borrowing the amd64 one.
+It publishes `-arm64`-suffixed tags only, from a version stream counted
+separately from the multi-architecture one. That is deliberate: a
+single-architecture build must never advance the unsuffixed tag, or an amd64
+node would be offered an image it cannot run.
 
 The script refuses to publish if the service directory has uncommitted or
 untracked changes, since the recorded commit would then not match what was
@@ -179,16 +200,20 @@ links, so unattended dependency changes can be audited from the run page.
 
 ## Consuming these images from Kubernetes
 
-Pin an immutable, architecture-matched tag and let Renovate advance it:
+Pin an immutable release tag and let Renovate advance it:
 
 ```yaml
-# renovate: datasource=docker depName=anthonysautomations/tinyproxy versioning=regex:^(?<major>\d{4})\.(?<minor>\d{2})\.(?<patch>\d{2})\.(?<build>\d+)(?:-(?<compatibility>amd64|arm64))?$
-image: anthonysautomations/tinyproxy:2026.07.30.1-amd64
+# renovate: datasource=docker depName=anthonysautomations/tinyproxy versioning=regex:^(?<major>\d{4})\.(?<minor>\d{2})\.(?<patch>\d{2})\.(?<build>\d+)$
+image: anthonysautomations/tinyproxy:2026.07.30.1@sha256:...
 ```
 
-Use the `-arm64` tag for arm64 workloads. Because the suffix is matched as
-`compatibility`, Renovate only proposes updates built for the same architecture,
-so each workload follows the newest image its nodes can actually run.
+One tag covers every architecture, so the same manifest can be used on amd64 and
+arm64 nodes alike. Adding the digest is worth doing: Renovate updates tag and
+digest together, and the digest of a manifest list still resolves per-node
+correctly, so immutability costs nothing in portability.
 
-Do not deploy `latest-amd64` / `latest-arm64`: they move underneath a running
-cluster and give Renovate nothing to raise a pull request against.
+The regex deliberately does not match `-<arch>` suffixes, so an out-of-band
+single-architecture build is never offered as an update.
+
+Do not deploy `latest`: it moves underneath a running cluster and gives Renovate
+nothing to raise a pull request against.

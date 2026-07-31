@@ -14,13 +14,15 @@ Use it when **all** of the following hold:
 - Builds are unattended: no human picks a version number or approves a release.
 - A **separate** repository (typically Kubernetes manifests) consumes the images
   and wants an automated updater such as Renovate to advance them.
-- More than one CPU architecture is published, and the architectures are **not**
-  built in lockstep — e.g. amd64 is automated in CI while arm64 is built manually
-  on an irregular schedule.
+- More than one CPU architecture is published, from a pipeline that can build
+  every one of them in a single run.
 
-If images are built in lockstep for all architectures in a single pipeline, the
-architecture-suffix part of this design is unnecessary; publish a single
-multi-architecture manifest per release instead.
+If the architectures genuinely cannot be built together — one is automated while
+another is produced by hand weeks later — the manifest-list approach in §3 does
+not apply and each architecture needs its own suffixed version stream instead.
+Building them together is strongly preferable: it is what allows one tag to serve
+every node, and it is what makes "publish nothing unless every architecture
+succeeded" enforceable.
 
 ---
 
@@ -33,8 +35,8 @@ An automated updater needs a version that is:
 2. **Totally ordered** — otherwise the updater cannot tell newer from older.
 3. **Immutable** — otherwise the deployed artefact silently changes underneath a
    pinned reference, and there is nothing to raise a pull request against.
-4. **Architecture-aware** — otherwise an amd64-only build can be offered to an
-   arm64 cluster.
+4. **Architecture-complete** — otherwise a build that only produced amd64 can be
+   offered to a cluster with arm64 nodes.
 
 ### Rejected alternatives
 
@@ -49,13 +51,14 @@ An automated updater needs a version that is:
 
 ### Chosen approach
 
-A **calendar version with a daily sequence number and an architecture suffix**,
-with exact upstream versions relegated to metadata.
+A **calendar version with a daily sequence number**, published as a
+multi-architecture manifest list, with exact upstream versions relegated to
+metadata.
 
 The date changes on every rebuild, which is precisely the event that matters. The
-sequence disambiguates same-day rebuilds. The suffix keeps architectures in
-separate update streams. Package versions stay inspectable without polluting the
-sortable identifier.
+sequence disambiguates same-day rebuilds. The manifest list keeps one tag valid
+on every node. Package versions stay inspectable without polluting the sortable
+identifier.
 
 ---
 
@@ -68,32 +71,87 @@ sortable identifier.
 | Field | Meaning |
 | --- | --- |
 | `YYYY.MM.DD` | UTC date of the build |
-| `N` | 1-based sequence within that date and architecture |
-| `arch` | `amd64`, `arm64`, … — omitted for multi-architecture manifests |
+| `N` | 1-based sequence within that date and version stream |
+| `arch` | `amd64`, `arm64`, … — present only on out-of-band single-architecture builds |
 
-Example: `2026.07.30.1-amd64`
+Example: `2026.07.30.1`
 
 ### Published tags
 
 | Tag | Mutability | Role |
 | --- | --- | --- |
-| `2026.07.30.1-amd64` | immutable | deployable release, pinned by consumers |
-| `2026.07.30.1-arm64` | immutable | deployable release, pinned by consumers |
-| `latest-<arch>` | moving | human convenience only, never deployed |
-| `latest` / unsuffixed version | reserved | promoted multi-architecture manifest |
+| `2026.07.30.1` | immutable | deployable multi-architecture release, pinned by consumers |
+| `latest` | moving | human convenience only, never deployed |
+| `2026.07.30.1-arm64` | immutable | out-of-band single-architecture build (escape hatch) |
 
 ### Rules
 
 1. **Release tags are never overwritten.** The build must verify the tag is unused
    and abort otherwise.
-2. **Each architecture allocates versions independently.** A manual arm64 build
-   made weeks after an amd64 build resolves different package contents; giving it
-   the amd64 version would assert an equivalence that does not exist.
-3. **Single-architecture pipelines never publish unsuffixed tags.** Those are
-   reserved for a manifest that genuinely contains every architecture, so a
-   mixed-architecture cluster cannot receive an image that only runs on some of
-   its nodes.
+2. **The unsuffixed tag is only ever created once every architecture has been
+   built and pushed.** This is the load-bearing rule; §3a describes how to
+   enforce it.
+3. **Single-architecture builds only publish suffixed tags**, from a separately
+   counted version stream. Advancing the unsuffixed stream with a partial
+   release would hand a mixed-architecture cluster an image that only runs on
+   some of its nodes.
 4. **All timestamps are UTC**, so builds from different regions order correctly.
+
+---
+
+## 3a. Publishing atomically across architectures
+
+Architectures build on different machines, and one of those machines can be
+unavailable while the others are fine. The failure that matters is not the build
+failing — it is publishing a version that *looks* like a release and turns out
+to be missing a platform. The consumer's updater then raises a perfectly
+plausible pull request that cannot be scheduled on half the cluster.
+
+Structure the pipeline as fan-out, fan-in:
+
+```text
+prepare   allocate one version + one metadata set for the whole release
+   |
+   +-- build(arch A) ---+     each on a native runner, pushing BY DIGEST
+   +-- build(arch B) ---+     with no tag whatsoever
+                         \
+publish  depends on EVERY build job succeeding:
+         assemble the digests into one manifest list,
+         verify it covers every expected platform,
+         then create the release tag, then move `latest`
+```
+
+The properties that make this work:
+
+- **Untagged pushes are inert.** A digest with no tag does not appear in tag
+  listings, cannot be pulled by name, and is invisible to the updater. A
+  half-finished release therefore leaves litter, not a trap.
+- **The dependency is the gate.** The publish stage must depend on all build
+  stages *without* any "run even on failure" override. On CI systems where a
+  skipped dependency does not skip the dependant, assert the expected digest
+  count explicitly as well.
+- **Verify before moving the alias.** Inspect the assembled manifest and compare
+  its platform set against the expected list; only then point `latest` at the
+  already-verified index. Note that SBOM/provenance attestations appear in the
+  index as `unknown/unknown` entries and must be filtered out of that
+  comparison.
+- **Metadata is allocated once, upstream of the fan-out.** If each build job
+  computed its own timestamp and version, the resulting manifest would describe
+  two coincidental builds rather than one release.
+
+Failing closed has a cost worth stating plainly: when one architecture cannot
+build, there is **no release**, not even for the architectures that were fine.
+That is the correct trade for unattended consumers — a missed weekly rebuild is
+recoverable, a broken deployment at 3am is not — but it makes builder
+availability part of the release path. Prefer hosted runners for every
+architecture (GitHub, for instance, offers native arm64 runners) rather than
+weakening the gate to work around a machine that is sometimes offline.
+
+If a self-hosted runner is unavoidable, note that a job queued for an offline one
+does **not** fail fast. It stays pending (GitHub cancels it after ~24 hours), and
+a job-level timeout bounds execution time, not queue time. Nothing is published
+either way, but the incident presents as a stalled run rather than a red one, so
+alerting should treat "still pending" as a signal.
 
 ---
 
@@ -102,22 +160,23 @@ Example: `2026.07.30.1-amd64`
 Runs immediately before each build.
 
 ```text
-INPUT:  repository, arch
+INPUT:  repository, optional arch
 OUTPUT: version string, or failure
 
+suffix := arch is set ? "-" + arch : ""
 date  := current UTC date, formatted YYYY.MM.DD
 tags  := registry tags for `repository` whose name starts with `date.`
          (use a server-side name filter to avoid paging full tag history)
 
 highest := 0
-for each tag matching ^<date>\.([0-9]+)-<arch>$:
+for each tag matching ^<date>\.([0-9]+)<suffix>$:
     highest := max(highest, captured integer)
 
 version := date + "." + (highest + 1)
 
 # Immutability guard: a failed or partial listing above must never cause an
 # existing release to be silently overwritten.
-status := registry lookup of `repository:version-arch`
+status := registry lookup of `repository:version+suffix`
 if status == NOT_FOUND: return version
 if status == FOUND:     fail "tag already exists"
 otherwise:              fail "cannot verify tag availability"
@@ -136,12 +195,17 @@ Notes:
   against allocating a stale one.
 - Retry the registry calls a few times for transient network errors; once
   retries are exhausted, a non-success response is fatal, not "treat as empty".
-- Serialise builds **per (product, architecture)** in CI so two concurrent runs
-  cannot allocate the same sequence number. Note the existence check does *not*
-  substitute for this: it runs at allocation time, not at push time, so two
-  overlapping runs can both see a version as free. If manual builds are frequent
-  or run by several people, add a lock; if they are rare and single-operator,
-  accepting the race is a reasonable trade.
+- Serialise builds **per (product, version stream)** in CI so two concurrent runs
+  cannot allocate the same sequence number — and serialise the *whole* release,
+  not just the allocation step, so two runs cannot interleave their tag pushes
+  either. Note the existence check does *not* substitute for this: it runs at
+  allocation time, not at push time, so two overlapping runs can both see a
+  version as free. If manual builds are frequent or run by several people, add a
+  lock; if they are rare and single-operator, accepting the race is a reasonable
+  trade.
+- Allocate **once per release, not once per architecture.** With the fan-out in
+  §3a, the allocation runs in a preparatory stage whose output every build stage
+  consumes.
 - Diagnostics go to stderr; only the version goes to stdout, so callers can
   capture it directly.
 
@@ -216,20 +280,20 @@ instead.
 
 | Component | Responsibility |
 | --- | --- |
-| Version allocator script | Implements §4. Shared verbatim by CI and manual builds so both obey one contract. |
-| Reusable CI workflow | Automated build for the CI-native architecture: allocate version, collect metadata, build, push release tag + moving alias. |
+| Version allocator script | Implements §4. Shared verbatim by CI and out-of-band builds so both obey one contract. |
+| Reusable CI workflow | Automated release: allocate version and metadata once, build every architecture in parallel pushing by digest, then assemble, verify and tag the manifest (§3a). |
 | Per-service CI wrappers | Triggers only (schedule / manual / change detection); pass just the service name — derive the registry repository and any other per-service input from it wherever they follow the same pattern, to avoid inputs that only ever repeat the service name. |
-| Build-only validation workflow | Manually dispatchable build of every service without publishing; supplies the check that gates automerge on updater branches (§7). |
-| Manual build script | Same steps for the non-CI architecture, runnable from a workstation. |
+| Build-only validation workflow | Manually dispatchable build of every service **on every architecture** without publishing; supplies the check that gates automerge on updater branches (§7). |
+| Out-of-band build script | Same steps for a single architecture, runnable from a workstation; publishes suffixed tags only. |
 | Dockerfiles | Pinned base image; late `ARG GIT_COMMIT` / `ENV GIT_COMMIT`. |
 | Base-image updater config | Renovate (or equivalent) bumping the pinned base image and CI action versions. |
 | Updater bot workflow | Scheduled run of that updater against this repository, with a token whose capabilities are chosen per §7. |
 
 Keeping the allocator as a **script rather than inline CI steps** is the key
-structural decision: it is what makes the manual architecture reproduce CI
+structural decision: it is what makes an out-of-band build reproduce CI
 behaviour exactly.
 
-The manual script should additionally:
+The out-of-band single-architecture script should additionally:
 
 - Validate dependencies and that the builder supports the target platform.
 - Accept credentials via environment variables and pipe them to `docker login`
@@ -250,23 +314,26 @@ provides for free.
 ## 7. Consumer configuration (Renovate)
 
 ```yaml
-# renovate: datasource=docker depName=<registry>/<image> versioning=regex:^(?<major>\d{4})\.(?<minor>\d{2})\.(?<patch>\d{2})\.(?<build>\d+)(?:-(?<compatibility>amd64|arm64))?$
-image: <registry>/<image>:2026.07.30.1-amd64
+# renovate: datasource=docker depName=<registry>/<image> versioning=regex:^(?<major>\d{4})\.(?<minor>\d{2})\.(?<patch>\d{2})\.(?<build>\d+)$
+image: <registry>/<image>:2026.07.30.1@sha256:...
 ```
 
-The suffix is captured as `compatibility`, which Renovate requires to match
-between current and candidate versions. An amd64 deployment therefore only ever
-sees amd64 updates. Each workload tracks the newest image its nodes can run,
-rather than the newest image overall.
+One tag serves every architecture, so consumers need no architecture-specific
+configuration and the same manifest deploys to mixed-architecture clusters. The
+regex deliberately does **not** match an `-<arch>` suffix, so an out-of-band
+single-architecture build is never offered as an update.
+
+Pin the digest alongside the tag. Renovate updates both together, and the digest
+of a manifest list still resolves per-node correctly, so immutability costs
+nothing in portability.
 
 Consumers must pin immutable release tags. Deploying a moving alias defeats the
 entire mechanism.
 
-If a previous scheme published a plain, unsuffixed moving tag (e.g. a bare
-`latest`) and it stops being updated when this design is introduced, treat that
-as a **breaking change requiring migration**, not an implementation detail —
-existing consumers must be repointed to an immutable, architecture-scoped tag
-before the old one is allowed to go stale.
+If a previous scheme published a tag that stops being updated when this design is
+introduced, treat that as a **breaking change requiring migration**, not an
+implementation detail — existing consumers must be repointed to an immutable
+release tag before the old one is allowed to go stale.
 
 ### Running the updater bot itself
 
@@ -389,13 +456,14 @@ the run page is the only place an auditor can start from.
 | Computed tag already exists | Abort. Never overwrite a release. |
 | Two builds on the same day | Second gets `.2`. Serialise to prevent races. |
 | SBOM/package inventory generation fails | Depends on tooling; must never silently produce a *wrong* value — omit or clearly mark as unavailable rather than fabricate. |
-| Working tree is dirty at manual-build time | Abort by default; require an explicit opt-in to publish with mismatched provenance. |
+| Working tree is dirty at out-of-band build time | Abort by default; require an explicit opt-in to publish with mismatched provenance. |
 | Base image pin unreadable | Abort — this indicates a malformed Dockerfile. |
 | Updater bot token missing or unset | The bot aborts before doing any work. Reference a token that actually exists (§7). |
 | Updater bot config invalid | The bot exits 0 having done nothing. Validate config in a preceding step and assert on the run result (§7). |
 | Updater PR waits on checks that never run | Same silent stall. Dispatch a build-only validation workflow on the bot's branches so a real check reports (§7). |
 | Updater branch exists but no PR was opened | Almost always the hourly PR rate limit, which is only logged at debug level. Switch it off or force creation from the dependency dashboard (§7). |
-| One architecture lags behind | Expected. Each stream advances independently. |
+| One architecture fails or its runner is unavailable | No release at all: the publish stage is skipped, leaving only untagged digests. Do not degrade to a partial manifest (§3a). |
+| Assembled manifest is missing a platform | Abort before moving `latest`; filter attestation (`unknown/unknown`) entries out of the comparison (§3a). |
 | Clock skew across builders | Use UTC everywhere; sequence numbers absorb same-day disorder. |
 
 ---
@@ -413,7 +481,7 @@ Parameters to adapt for a new product:
 2. Service list, and whether the registry/build tooling in use supports SBOM
    attestations (§5) for package inventory.
 3. Base image and its pinning strategy.
-4. Which architecture is automated and which is manual.
+4. Which architectures are published, and the runner available for each.
 5. Label namespace (`<ns>.<product>.*`).
 6. Build cadence.
 
@@ -421,17 +489,18 @@ Then implement, in order:
 
 1. Version allocator script (§4) — test against a real and a nonexistent repo.
 2. Dockerfile provenance `ARG`/`ENV` (§5), placed after dependency layers.
-3. Reusable build workflow for the automated architecture (§6).
+3. Reusable build workflow: prepare / per-architecture build / publish (§3a, §6).
 4. Thin per-service trigger wrappers.
-5. Manual build script for the remaining architecture.
+5. Out-of-band single-architecture build script, if an escape hatch is wanted.
 6. Consumer-side updater config (§7).
 7. Documentation of the tag contract for consumers.
 
-### Deliberate gap
+### Closed gap: the multi-architecture manifest
 
-Nothing in this design creates the multi-architecture manifest for the unsuffixed
-tags. That requires a **promotion step** — selecting one release per architecture,
-verifying they are acceptably equivalent, and combining them (e.g.
-`docker buildx imagetools create`) under a newly allocated unsuffixed version.
-Add it only if consumers genuinely need a single architecture-agnostic tag;
-single-architecture consumers are fully served without it.
+An earlier revision of this design left the unsuffixed tags unpublished, on the
+grounds that the architectures were not built together and combining them would
+require a separate promotion step. Building every architecture in one pipeline
+removes that step entirely: the manifest is assembled from digests produced by
+the same release, so there is no "are these two builds equivalent?" judgement to
+make. Prefer that arrangement. Fall back to per-architecture suffixed streams
+only when the architectures genuinely cannot be built in the same run.

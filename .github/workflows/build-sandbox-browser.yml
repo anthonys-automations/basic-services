@@ -1,6 +1,6 @@
-# Pipeline to build and publish the sandbox-browser image (linux/amd64) to
-# DockerHub. Triggered manually, on weekly schedule, or by the common
-# change-detection pipeline.
+# Pipeline to build and publish the sandbox-browser image (linux/amd64 +
+# linux/arm64) to DockerHub. Triggered manually, on weekly schedule, or by the
+# common change-detection pipeline.
 #
 # The build logic now lives in the shared build-image.yml workflow so the agreed
 # Docker tag strategy is defined in exactly one place; this file only supplies

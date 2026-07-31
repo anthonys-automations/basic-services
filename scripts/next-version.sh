@@ -3,16 +3,20 @@
 # Computes the next immutable calendar version for an image release.
 #
 # Added as part of the Docker tag strategy work: downstream Kubernetes Renovate
-# needs a monotonically increasing, architecture-scoped version to track. The
-# contract is:
+# needs a monotonically increasing version to track. The contract is:
 #
-#     <YYYY>.<MM>.<DD>.<N>-<arch>      e.g. 2026.07.30.1-amd64
+#     <YYYY>.<MM>.<DD>.<N>[-<arch>]    e.g. 2026.07.30.1
 #
 # The date changes whenever a rebuild happens (which is what actually moves for
 # this repo: Alpine package contents, not source code), and <N> disambiguates
-# multiple builds on the same day. The architecture suffix is consumed by
-# Renovate as the `compatibility` group so an amd64 deployment is never offered
-# an arm64 image (and vice versa).
+# multiple builds on the same day.
+#
+# The architecture suffix is optional and is now only used by out-of-band
+# single-architecture builds. The CI pipeline builds every architecture in
+# lockstep and publishes one multi-architecture manifest, so it allocates from
+# the unsuffixed stream; the two streams are counted separately, which is
+# intended - a single-arch escape-hatch release must never advance the version
+# that mixed-architecture consumers track.
 #
 # Failure handling is deliberately fail-closed: only an empty/first-ever
 # repository (HTTP 404) is treated as "no tags yet". Any other non-200
@@ -23,23 +27,25 @@
 # which Renovate would then never see as an update.
 #
 # Usage:
-#   next-version.sh <dockerhub-repo> <arch>
+#   next-version.sh <dockerhub-repo> [arch]
 #
-# Example:
-#   next-version.sh anthonysautomations/tinyproxy amd64
+# Examples:
+#   next-version.sh anthonysautomations/tinyproxy          # multi-arch stream
+#   next-version.sh anthonysautomations/tinyproxy arm64     # single-arch stream
 #
 # Prints the new version (without the arch suffix) to stdout. All diagnostics go
 # to stderr so the caller can capture stdout directly.
 
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-    echo "usage: $(basename "$0") <dockerhub-repo> <arch>" >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+    echo "usage: $(basename "$0") <dockerhub-repo> [arch]" >&2
     exit 2
 fi
 
 repo=$1
-arch=$2
+arch=${2:-}
+suffix=${arch:+-${arch}}
 
 for dep in curl jq; do
     if ! command -v "$dep" >/dev/null 2>&1; then
@@ -86,7 +92,7 @@ esac
 
 highest=0
 # Escape the dots so the date is matched literally rather than as wildcards.
-pattern="^${date_part//./\\.}\\.([0-9]+)-${arch}$"
+pattern="^${date_part//./\\.}\\.([0-9]+)${suffix}$"
 while IFS= read -r name; do
     [[ -n ${name} ]] || continue
     if [[ ${name} =~ ${pattern} ]]; then
@@ -98,7 +104,7 @@ while IFS= read -r name; do
 done < <(jq -r '.results[]?.name // empty' "${body_file}")
 
 version="${date_part}.$(( highest + 1 ))"
-tag="${version}-${arch}"
+tag="${version}${suffix}"
 
 # Release tags are immutable. Verify the computed tag really is unused before
 # handing it back, so a failed/partial listing above can never cause an existing
@@ -121,5 +127,5 @@ case "${tag_status}" in
         ;;
 esac
 
-echo "resolved next version for ${repo} (${arch}): ${tag}" >&2
+echo "resolved next version for ${repo} (${arch:-multi-arch}): ${tag}" >&2
 echo "${version}"

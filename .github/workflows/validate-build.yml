@@ -10,6 +10,11 @@
 # Deliberately build-only: the publishing workflows allocate an immutable
 # release version and push to DockerHub, which must never happen from an
 # unmerged branch.
+#
+# Every architecture is validated, on the same runners the release pipeline
+# uses, so an arm64-only Dockerfile break is caught here instead of at release
+# time. Native GitHub-hosted runners rather than qemu: emulated builds of
+# sandbox-browser are slow enough to be a problem.
 name: Validate Image Builds
 
 on:
@@ -20,12 +25,21 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
 
     strategy:
       fail-fast: false
       matrix:
         service: [exim, postfix, tinyproxy, sandbox-browser]
+        platform: [linux/amd64, linux/arm64]
+        # Matched on `platform` so each combination gains the right runner,
+        # rather than adding standalone jobs.
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - name: Checkout repository
@@ -39,7 +53,7 @@ jobs:
         with:
           context: ./${{ matrix.service }}
           file: ./${{ matrix.service }}/Dockerfile
-          platforms: linux/amd64
+          platforms: ${{ matrix.platform }}
           push: false
           # Mirrors the build arg used by the publishing workflow so a missing
           # or renamed ARG is caught here rather than at release time.

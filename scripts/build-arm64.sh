@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 #
-# Manually builds and publishes a service image for linux/arm64.
+# Out-of-band build and publish of a service image for linux/arm64.
 #
-# Added alongside the amd64 GitHub Actions pipeline: arm64 images are produced
-# by hand on an irregular schedule, but downstream Kubernetes Renovate still
-# needs them to follow the same immutable, sortable, architecture-scoped tag
-# contract as the automated amd64 builds.
+# This is no longer the normal route for arm64: CI builds every architecture in
+# lockstep and publishes one multi-architecture manifest under the unsuffixed
+# tag. The script is kept as an escape hatch - a workstation build when the
+# pipeline itself is unavailable, or a deliberate single-architecture release.
 #
 # Tags published:
-#   <YYYY>.<MM>.<DD>.<N>-arm64   immutable release, this is what k8s pins
+#   <YYYY>.<MM>.<DD>.<N>-arm64   immutable, arm64-only
 #   latest-arm64                 moving alias, convenience only - never deploy it
 #
-# The arm64 version is allocated independently of amd64 on purpose: a manual
-# arm64 build weeks after an amd64 build resolves different Alpine package
-# contents, so pretending they are the same release would be a lie. The
-# unsuffixed tags stay reserved for a promoted multi-architecture manifest.
+# The arch suffix is what makes this safe to run: a single-architecture build
+# must never advance the unsuffixed tag that mixed-architecture consumers track,
+# or a node of the other architecture would be handed an image it cannot run.
+# The suffixed stream is also versioned independently of the multi-arch one, so
+# a release made here does not consume a sequence number CI would otherwise use.
 #
 # Package inventory is not queried from an independent container before the
 # build (that could drift from what actually gets installed, since Alpine's
