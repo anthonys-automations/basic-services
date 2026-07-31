@@ -1,8 +1,8 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.25
 
 # Playwright's maintained image supplies compatible Chromium, Firefox, Node.js,
 # and the OS libraries required to automate both browsers.
-FROM mcr.microsoft.com/playwright:v1.55.0-noble
+FROM mcr.microsoft.com/playwright:v1.62.1-noble
 
 ENV DEBIAN_FRONTEND=noninteractive \
   PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
@@ -32,7 +32,7 @@ RUN apt-get update \
   && chmod 700 /home/user/.ssh \
   && dbus-uuidgen > /etc/machine-id \
   && rm -f /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem \
-  && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --prefix /opt/playwright playwright@1.55.0 \
+  && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --prefix /opt/playwright playwright@1.62.1 \
   # Playwright resolves browsers by revision, so a pin that disagrees with the base image builds cleanly and only fails at runtime.
   && node -e 'const p=require("playwright"),f=require("fs");for(const b of [p.chromium,p.firefox]){const e=b.executablePath();if(!f.existsSync(e))throw new Error("npm playwright does not match the base image browsers: "+e)}' \
   # SSH sessions do not inherit image ENV, so PAM supplies these to agents too.
