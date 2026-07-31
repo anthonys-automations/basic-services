@@ -1,0 +1,26 @@
+# Pipeline to build and publish the sandbox-browser image (linux/amd64) to
+# DockerHub. Triggered manually, on weekly schedule, or by the common
+# change-detection pipeline.
+#
+# The build logic now lives in the shared build-image.yml workflow so the agreed
+# Docker tag strategy is defined in exactly one place; this file only supplies
+# the service-specific inputs and triggers.
+name: Build and Publish Sandbox Browser
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+
+  # Weekly schedule - runs every Sunday at 00:00 UTC
+  schedule:
+    - cron: '0 0 * * 0'
+
+  # Allow triggering from other workflows
+  workflow_call:
+
+jobs:
+  build-and-publish:
+    uses: ./.github/workflows/build-image.yml
+    with:
+      service: sandbox-browser
+    secrets: inherit

@@ -138,11 +138,10 @@ tag="${version}-${arch}"
 # ---------------------------------------------------------------------------
 # Provenance metadata
 # ---------------------------------------------------------------------------
-# The Alpine release is pinned in the Dockerfile, so read it from there.
-alpine_version=$(sed -nE 's|^FROM alpine:([A-Za-z0-9._-]+).*|\1|p' "${dockerfile}")
-alpine_version=${alpine_version%%$'\n'*}
-if [[ -z ${alpine_version} ]]; then
-    echo "error: could not determine the pinned Alpine version from ${dockerfile}" >&2
+# Record the source-pinned base rather than querying a mutable registry.
+base_image=$(awk '$1 == "FROM" { print $2; exit }' "${dockerfile}")
+if [[ -z ${base_image} ]]; then
+    echo "error: could not determine the pinned base image from ${dockerfile}" >&2
     exit 1
 fi
 
@@ -163,7 +162,7 @@ cat <<EOF
     platform         ${platform}
     release tag      ${tag}
     moving alias     latest-${arch}
-    alpine           ${alpine_version}
+    base image       ${base_image}
     revision         ${revision}
 EOF
 
@@ -178,7 +177,7 @@ docker buildx build \
     --label "org.opencontainers.image.revision=${revision}" \
     --label "org.opencontainers.image.source=${source_url}" \
     --label "org.opencontainers.image.created=${created}" \
-    --label "io.anthonysautomations.alpine.version=${alpine_version}" \
+    --label "io.anthonysautomations.base.image=${base_image}" \
     --sbom=true \
     --push \
     "${context_dir}"

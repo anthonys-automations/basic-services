@@ -1,0 +1,3 @@
+#!/bin/sh
+# Ubuntu's firefox package is a snap stub, so use Playwright's bundled build.
+exec /opt/sandbox-browser/firefox "$@"

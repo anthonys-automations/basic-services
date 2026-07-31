@@ -1,6 +1,6 @@
 # basic-services
 
-Minimal Alpine-based service images (`exim`, `postfix`, `tinyproxy`) published to
+Service images (`exim`, `postfix`, `tinyproxy`, `sandbox-browser`) published to
 DockerHub under the `anthonysautomations` namespace.
 
 The source here changes very rarely. Almost every release is a rebuild that picks
@@ -11,7 +11,7 @@ its own Renovate.
 > **Breaking change:** this repository no longer publishes a plain `latest` tag.
 > It previously did; that tag is now frozen at its last pre-migration value and
 > will not receive further updates. If anything still deploys
-> `anthonysautomations/{exim,postfix,tinyproxy}:latest`, repoint it to an
+> `anthonysautomations/{exim,postfix,tinyproxy,sandbox-browser}:latest`, repoint it to an
 > immutable, architecture-scoped tag (see [Consuming these images from
 > Kubernetes](#consuming-these-images-from-kubernetes)) before relying on new
 > releases.
@@ -38,7 +38,7 @@ Why this shape:
 - The **daily sequence** allows more than one build per day.
 - The **architecture suffix** is read by Renovate as its `compatibility` group, so
   an amd64 deployment is never offered an arm64 image, and vice versa.
-- The exact Alpine version is kept in a **label**, and the full package inventory
+- The exact base image is kept in a **label**, and the full package inventory
   in an **SBOM attestation**, rather than in the tag, so the tag stays short and
   reliably sortable while remaining fully inspectable.
 
@@ -58,7 +58,7 @@ org.opencontainers.image.version
 org.opencontainers.image.revision
 org.opencontainers.image.source
 org.opencontainers.image.created
-io.anthonysautomations.alpine.version
+io.anthonysautomations.base.image
 ```
 
 The exact set of installed packages is **not** captured as a label — an
@@ -101,11 +101,11 @@ var or label alone.
 ## amd64 builds (automated)
 
 `.github/workflows/build-image.yml` is a reusable workflow; the per-service
-workflows (`build-exim.yml`, `build-postfix.yml`, `build-tinyproxy.yml`) supply the
-inputs and triggers, and `ci.yml` invokes them on relevant path changes. Each also
-runs weekly and on manual dispatch.
+workflows (`build-exim.yml`, `build-postfix.yml`, `build-tinyproxy.yml`,
+`build-sandbox-browser.yml`) supply the inputs and triggers, and `ci.yml` invokes
+them on relevant path changes. Each also runs weekly and on manual dispatch.
 
-`.github/workflows/validate-build.yml` builds all three images **without
+`.github/workflows/validate-build.yml` builds all four images **without
 publishing**. It is manually dispatchable and is what the Renovate workflow
 triggers on dependency branches, so a base-image bump is built before it merges
 without ever allocating a release version from an unmerged branch.
@@ -141,8 +141,8 @@ acceptable (e.g. local experimentation, never for an audited release).
 ## Dependency updates (Renovate)
 
 `.github/workflows/renovate.yml` runs a self-hosted Renovate weekly (Friday
-03:00 UTC) and on manual dispatch, keeping the pinned Alpine base images and
-GitHub Actions versions current.
+03:00 UTC) and on manual dispatch, keeping pinned base images, the Playwright npm
+package paired with sandbox-browser, and GitHub Actions versions current.
 
 It authenticates with the built-in `GITHUB_TOKEN`; no secret is needed. Three
 consequences follow from that:

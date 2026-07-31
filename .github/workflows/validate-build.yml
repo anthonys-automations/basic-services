@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [exim, postfix, tinyproxy]
+        service: [exim, postfix, tinyproxy, sandbox-browser]
 
     steps:
       - name: Checkout repository

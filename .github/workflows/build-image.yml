@@ -73,17 +73,16 @@ jobs:
         run: |
           set -euo pipefail
           service='${{ inputs.service }}'
+          dockerfile="${service}/Dockerfile"
 
-          # The Alpine release is pinned in the Dockerfile, so read it straight
-          # from there rather than inspecting the built image.
-          alpine_version=$(sed -nE 's|^FROM alpine:([A-Za-z0-9._-]+).*|\1|p' "${service}/Dockerfile")
-          alpine_version=${alpine_version%%$'\n'*}
-          if [[ -z "${alpine_version}" ]]; then
-            echo "error: could not determine the pinned Alpine version" >&2
+          # Record the source-pinned base rather than querying a mutable registry.
+          base_image=$(awk '$1 == "FROM" { print $2; exit }' "${dockerfile}")
+          if [[ -z "${base_image}" ]]; then
+            echo "error: could not determine the pinned base image" >&2
             exit 1
           fi
 
-          echo "alpine_version=${alpine_version}" >> "$GITHUB_OUTPUT"
+          echo "base_image=${base_image}" >> "$GITHUB_OUTPUT"
           echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
@@ -98,7 +97,7 @@ jobs:
             ${{ steps.version.outputs.repo }}:${{ steps.version.outputs.tag }}
             ${{ steps.version.outputs.repo }}:latest-amd64
           # Full provenance lives in labels/SBOM: the tag stays short and
-          # sortable while the exact Alpine version and installed package
+          # sortable while the exact base image and installed package
           # inventory (via the SBOM attestation, generated from the image that
           # is actually pushed) remain inspectable.
           labels: |
@@ -107,7 +106,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.created=${{ steps.meta.outputs.created }}
-            io.anthonysautomations.alpine.version=${{ steps.meta.outputs.alpine_version }}
+            io.anthonysautomations.base.image=${{ steps.meta.outputs.base_image }}
           # Bake the commit into the image itself (see the Dockerfile ARG) so it
           # is traceable from inside a running container, not only via labels.
           build-args: |
@@ -124,5 +123,5 @@ jobs:
           # and points somewhere else by the time anyone reads this.
           echo "- **Release tag:** [${{ steps.version.outputs.tag }}](https://hub.docker.com/layers/${{ steps.version.outputs.repo }}/${{ steps.version.outputs.tag }}/)" >> $GITHUB_STEP_SUMMARY
           echo "- **Moving alias:** latest-amd64" >> $GITHUB_STEP_SUMMARY
-          echo "- **Alpine:** ${{ steps.meta.outputs.alpine_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Base image:** ${{ steps.meta.outputs.base_image }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Git Hash:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

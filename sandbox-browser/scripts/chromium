@@ -1,0 +1,7 @@
+#!/bin/sh
+# Chromium's sandbox needs user namespaces; drop it only when the container forbids them.
+if unshare --user --map-root-user true 2>/dev/null; then
+  exec /opt/sandbox-browser/chromium "$@"
+fi
+
+exec /opt/sandbox-browser/chromium --no-sandbox "$@"
