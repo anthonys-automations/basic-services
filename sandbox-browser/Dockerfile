@@ -39,9 +39,11 @@ RUN apt-get update \
   && printf 'PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\nNODE_PATH=/opt/playwright/node_modules\n' >> /etc/environment
 
 # Pin launchers to the image's single installed browser revisions.
+# Asking playwright for the paths avoids hardcoding a per-version directory layout,
+# which broke when the base image moved the Chromium binary out of chrome-linux/.
 RUN mkdir -p /opt/sandbox-browser \
-  && ln -s "$(find /ms-playwright -path '*/firefox/firefox' -type f -print -quit)" /opt/sandbox-browser/firefox \
-  && ln -s "$(find /ms-playwright -path '*/chrome-linux/chrome' -type f -print -quit)" /opt/sandbox-browser/chromium
+  && ln -s "$(node -e 'process.stdout.write(require("playwright").firefox.executablePath())')" /opt/sandbox-browser/firefox \
+  && ln -s "$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')" /opt/sandbox-browser/chromium
 
 COPY --chmod=755 scripts/firefox scripts/chromium /usr/local/bin/
 
