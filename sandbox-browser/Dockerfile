@@ -1,8 +1,8 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.25
 
 # Playwright's maintained image supplies compatible Chromium, Firefox, Node.js,
 # and the OS libraries required to automate both browsers.
-FROM mcr.microsoft.com/playwright:v1.55.0-noble
+FROM mcr.microsoft.com/playwright:v1.62.1-noble
 
 ENV DEBIAN_FRONTEND=noninteractive \
   PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
@@ -32,16 +32,18 @@ RUN apt-get update \
   && chmod 700 /home/user/.ssh \
   && dbus-uuidgen > /etc/machine-id \
   && rm -f /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem \
-  && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --prefix /opt/playwright playwright@1.55.0 \
+  && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --prefix /opt/playwright playwright@1.62.1 \
   # Playwright resolves browsers by revision, so a pin that disagrees with the base image builds cleanly and only fails at runtime.
   && node -e 'const p=require("playwright"),f=require("fs");for(const b of [p.chromium,p.firefox]){const e=b.executablePath();if(!f.existsSync(e))throw new Error("npm playwright does not match the base image browsers: "+e)}' \
   # SSH sessions do not inherit image ENV, so PAM supplies these to agents too.
   && printf 'PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\nNODE_PATH=/opt/playwright/node_modules\n' >> /etc/environment
 
 # Pin launchers to the image's single installed browser revisions.
+# Asking playwright for the paths avoids hardcoding a per-version directory layout,
+# which broke when the base image moved the Chromium binary out of chrome-linux/.
 RUN mkdir -p /opt/sandbox-browser \
-  && ln -s "$(find /ms-playwright -path '*/firefox/firefox' -type f -print -quit)" /opt/sandbox-browser/firefox \
-  && ln -s "$(find /ms-playwright -path '*/chrome-linux/chrome' -type f -print -quit)" /opt/sandbox-browser/chromium
+  && ln -s "$(node -e 'process.stdout.write(require("playwright").firefox.executablePath())')" /opt/sandbox-browser/firefox \
+  && ln -s "$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')" /opt/sandbox-browser/chromium
 
 COPY --chmod=755 scripts/firefox scripts/chromium /usr/local/bin/
 
