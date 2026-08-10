@@ -1,69 +1,70 @@
 # Sandbox Browser
 
-A container for browser automation with Chromium and Firefox. A single image runs in one of two explicit modes:
+A container for browser automation with Chromium and Firefox. One container serves both access paths at once:
 
-- **Agent mode** — SSH access for an LLM agent to run headless Playwright tasks.
-- **Desktop mode** — XRDP + XFCE so a human can drive Firefox interactively.
+- **SSH** — for an LLM agent to run headless Playwright tasks.
+- **RDP** — XRDP + XFCE so a human can drive Firefox interactively.
 
-Set `SANDBOX_MODE=ssh` or `SANDBOX_MODE=xrdp`. The supplied Compose profiles set the appropriate value.
+Both listeners always start. Supply an SSH public key, `XRDP_PASSWORD`, or both; the container refuses to start with neither. Without a password the `user` account stays locked, so RDP rejects every login.
 
 ## Contents
 
 - Non-root `user` account, Node.js, Playwright, Chromium, and Firefox.
 - `firefox` and `chromium` launchers on `PATH` for interactive use.
-- A bind-mounted `/home/user/workspace` shared by both modes.
+- A bind-mounted `/home/user/workspace`.
 - Per-container SSH host keys and XRDP TLS certificate generated at startup.
 
 ## Prerequisites
 
 - Docker Engine with Compose v2.
-- For agent mode, an SSH key pair: `ssh-keygen -t ed25519 -f ~/.ssh/sandbox-browser`.
-- For desktop mode, an RDP client such as Remmina, FreeRDP, or Windows Remote Desktop.
+- For SSH, a key pair: `ssh-keygen -t ed25519 -f ~/.ssh/sandbox-browser`.
+- For RDP, a client such as Remmina, FreeRDP, or Windows Remote Desktop.
 
-## Agent mode (SSH)
+## Run
 
 ```bash
 export AUTHORIZED_KEYS_FILE="$HOME/.ssh/sandbox-browser.pub"
+export XRDP_PASSWORD='choose-a-strong-password'
 export WORKSPACE_DIR="$PWD/workspace"
 mkdir -p "$WORKSPACE_DIR"
-docker compose --profile agent up --build -d
+docker compose up --build -d
 ```
 
-The container refuses to start without a mounted public key, and SSH passwords are disabled.
+Compose always binds an `authorized_keys` file. For an RDP-only container, point `AUTHORIZED_KEYS_FILE` at an empty file so Docker does not create a directory in its place:
+
+```bash
+mkdir -p secrets && touch secrets/authorized_keys
+```
+
+### Agent access (SSH)
 
 ```bash
 ssh -p 2222 -i ~/.ssh/sandbox-browser user@localhost
 node -e "const { chromium, firefox } = require('playwright'); Promise.all([chromium.launch().then(b => b.close()), firefox.launch().then(b => b.close())]).then(() => console.log('both browsers launched'))"
 ```
 
-An agent can work in `/home/user/workspace` and invoke `node`, `python3`, `git`, or Playwright directly. Playwright runs headlessly, so no desktop is required.
+An agent can work in `/home/user/workspace` and invoke `node`, `python3`, `git`, or Playwright directly. Playwright runs headlessly, so no desktop is required. SSH passwords are disabled.
 
-## Desktop mode (XRDP)
+### Desktop access (RDP)
 
-```bash
-export XRDP_PASSWORD='choose-a-strong-password'
-export WORKSPACE_DIR="$PWD/workspace"
-docker compose --profile desktop up --build -d
-```
+Connect an RDP client to `127.0.0.1:3389` and log in as `user` with `XRDP_PASSWORD`. XFCE starts automatically, and Firefox can be launched from the application menu or a terminal.
 
-`SANDBOX_MODE=xrdp` requires `XRDP_PASSWORD`; a missing value exits with a configuration error. Connect an RDP client to `127.0.0.1:3389` and log in as `user` with that password. XFCE starts automatically, and Firefox can be launched from the application menu or a terminal.
-
-The password is applied to the `user` account at startup, so no credential is stored in the image. The entrypoint unsets the variable before starting the desktop, keeping it out of session processes.
+The password is applied to the `user` account at startup, so no credential is stored in the image. The entrypoint unsets the variable before starting the listeners, keeping it out of session processes.
 
 ### Security notes
 
 - SSH host keys and the XRDP TLS certificate are generated per container startup. For stable host identity, mount managed keys instead.
 - The RDP port is published on loopback only. Keep it behind a VPN or SSH tunnel and never expose it to an untrusted network.
 - `XRDP_PASSWORD` is visible to anyone who can run `docker inspect`. Use a unique, disposable password.
-- SSH password authentication stays disabled in both modes.
+- SSH password authentication stays disabled.
 
 ## Session lifecycle
 
-The container serves one authenticated session at a time. PAM atomically claims the sandbox before the SSH command or RDP desktop session opens; competing sessions are rejected. The listener stops once claimed, readiness drops, and the container exits when the client disconnects. Both Compose services use `restart: unless-stopped` to return to the pool.
+The container is claimed by the first client, over either protocol. PAM records a session marker on open and removes it on close, and the first marker drops readiness so a load balancer stops sending new clients. Both listeners keep running, so a client that raced in — an agent opening SSH alongside its own desktop, for example — is served rather than rejected. The container exits once every session has ended, and `restart: unless-stopped` returns it to the pool.
 
 ### Readiness and liveness
 
-Runtime state is stored in `/run/sandbox` (override with `SANDBOX_RUNTIME_DIR`). `/run/sandbox/session-active` exists while a client holds the sandbox. The readiness probe is successful only while an unclaimed listener is running; the liveness probe monitors listener processes until the sandbox is claimed, then leaves established-session supervision to the entrypoint.
+Runtime state is stored in `/run/sandbox` (override with `SANDBOX_RUNTIME_DIR`). `/run/sandbox/sessions` holds one marker per live session, named after the owning `sshd` or `xrdp-sesman` process so the entrypoint can reap a session that died without a PAM close. The readiness probe is successful only while the sandbox is unclaimed; the liveness probe watches both listeners for the whole container life.
 
 ```yaml
 readinessProbe:
@@ -81,7 +82,7 @@ livenessProbe:
 A restart replaces processes but not Docker's writable layer. For a pristine local Docker sandbox per session, recreate the container:
 
 ```bash
-docker compose --profile agent up -d --force-recreate
+docker compose up -d --force-recreate
 ```
 
 In Kubernetes, only mounted volumes carry state between restarted containers.
@@ -93,8 +94,8 @@ In Kubernetes, only mounted volumes carry state between restarted containers.
 
 ## Version policy
 
-The Playwright version is pinned in both the `FROM` tag and the npm package installed alongside it. Renovate updates them together; after a manual update, re-test both modes.
+The Playwright version is pinned in both the `FROM` tag and the npm package installed alongside it. Renovate updates them together; after a manual update, re-test both access paths.
 
 ## Design
 
-Background on the desktop variant is in [docs/xrdp-variant.md](docs/xrdp-variant.md).
+Background on the desktop side is in [docs/xrdp-variant.md](docs/xrdp-variant.md).

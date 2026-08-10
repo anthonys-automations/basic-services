@@ -1,37 +1,20 @@
 services:
-  # Headless automation over SSH: docker compose --profile agent up --build -d
-  agent:
-    profiles: ["agent"]
+  # SSH and RDP run side by side: docker compose up --build -d
+  sandbox:
     build:
       context: .
     environment:
-      SANDBOX_MODE: ssh
+      # Omit to leave the account locked, which makes the RDP listener unusable.
+      XRDP_PASSWORD: ${XRDP_PASSWORD:-}
     ports:
       - "${SSH_PORT:-2222}:22"
+      # Bound to loopback because RDP must not be published broadly.
+      - "127.0.0.1:${RDP_PORT:-3389}:3389"
     volumes:
       - type: bind
         source: ${AUTHORIZED_KEYS_FILE:-./secrets/authorized_keys}
         target: /home/user/.ssh/authorized_keys
         read_only: true
-      - type: bind
-        source: ${WORKSPACE_DIR:-./workspace}
-        target: /home/user/workspace
-    init: true
-    shm_size: 1gb
-    restart: unless-stopped
-
-  # Interactive desktop over RDP: docker compose --profile desktop up --build -d
-  desktop:
-    profiles: ["desktop"]
-    build:
-      context: .
-    environment:
-      SANDBOX_MODE: xrdp
-      XRDP_PASSWORD: ${XRDP_PASSWORD:-}
-    # Bound to loopback because RDP must not be published broadly.
-    ports:
-      - "127.0.0.1:${RDP_PORT:-3389}:3389"
-    volumes:
       - type: bind
         source: ${WORKSPACE_DIR:-./workspace}
         target: /home/user/workspace

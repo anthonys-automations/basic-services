@@ -50,19 +50,19 @@ RUN sed -i 's/^autorun=.*/autorun=Xvnc/' /etc/xrdp/xrdp.ini \
   # End the desktop on disconnect rather than parking it for reconnection.
   && sed -i 's/^KillDisconnected=.*/KillDisconnected=true/' /etc/xrdp/sesman.ini \
   && grep -q '^KillDisconnected=true' /etc/xrdp/sesman.ini \
-  # One tenant per container.
+  # One desktop at a time; SSH runs alongside it.
   && sed -i 's/^MaxSessions=.*/MaxSessions=1/' /etc/xrdp/sesman.ini \
   && grep -q '^MaxSessions=1' /etc/xrdp/sesman.ini
 
-COPY --chmod=755 scripts/claim-session.sh /usr/local/bin/claim-session.sh
+COPY --chmod=755 scripts/session-hook.sh /usr/local/bin/session-hook.sh
 COPY --chmod=755 scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY --chmod=755 scripts/readiness-probe.sh /usr/local/bin/readiness-probe.sh
 COPY --chmod=755 scripts/liveness-probe.sh /usr/local/bin/liveness-probe.sh
 COPY --chmod=755 scripts/startwm.sh /etc/xrdp/startwm.sh
 
-# PAM calls this before each authenticated desktop or SSH command session.
-RUN printf '\nsession required pam_exec.so quiet /usr/local/bin/claim-session.sh\n' >> /etc/pam.d/sshd \
-  && printf '\nsession required pam_exec.so quiet /usr/local/bin/claim-session.sh\n' >> /etc/pam.d/xrdp-sesman
+# PAM calls this on open and close of every authenticated desktop or SSH session.
+RUN printf '\nsession required pam_exec.so quiet /usr/local/bin/session-hook.sh\n' >> /etc/pam.d/sshd \
+  && printf '\nsession required pam_exec.so quiet /usr/local/bin/session-hook.sh\n' >> /etc/pam.d/xrdp-sesman
 
 # Keep published containers traceable to the source revision.
 ARG GIT_COMMIT=unknown
