@@ -66,6 +66,12 @@ jobs:
 
       - name: Resolve next release version
         id: version
+        env:
+          # The allocator lists tags over the Docker Hub API; unauthenticated it
+          # cannot tell a private repository from a missing one and would
+          # re-allocate .1 over the existing release.
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
           repo="${{ env.DOCKERHUB_NAMESPACE }}/${{ inputs.service }}"

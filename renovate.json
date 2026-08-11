@@ -51,7 +51,7 @@
       "automerge": true
     },
     {
-      "description": "GitHub Actions updates are listed on the dependency dashboard instead of raising branches: GITHUB_TOKEN has no 'workflow' scope, so pushing a change under .github/workflows is rejected and the run would fail on every attempt. Tick an item on the dashboard only if you intend to apply that bump by hand.",
+      "description": "GitHub Actions updates are listed on the dependency dashboard instead of raising branches: GITHUB_TOKEN has no 'workflow' scope, so pushing a change under .github/workflows is rejected and the run would fail on every attempt. Tick an item on the dashboard only if you intend to apply that bump by hand. Surfacing them at all requires GITHUB_COM_TOKEN in the workflow: authenticating the platform does not authenticate the github.com datasource, and without it every github-tags lookup is skipped as 'github-token-required', so nothing ever reaches the dashboard to tick.",
       "matchManagers": [
         "github-actions"
       ],

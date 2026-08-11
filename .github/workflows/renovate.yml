@@ -21,7 +21,7 @@ on:
 
   # Weekly schedule - runs every Friday at 03:00 UTC
   schedule:
-    - cron: '0 3 * * 5'
+    - cron: '0 3 * * 2,5'
 
 # Renovate pushes branches and opens PRs with the built-in GITHUB_TOKEN, so the
 # job needs write scopes. `issues: write` is for the dependency dashboard issue
@@ -88,6 +88,13 @@ jobs:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
           LOG_FILE: ${{ env.RENOVATE_LOG_FILE }}
           LOG_FILE_LEVEL: info
+          # Authenticating the *platform* does not authenticate the github.com
+          # *datasource*: without this, every github-tags/github-releases lookup
+          # is skipped with `github-token-required`, which silently covers every
+          # `actions/*` and `renovatebot/*` pin while Docker Hub deps still
+          # resolve - so Actions updates alone go missing and nothing ever
+          # reaches the dependency dashboard.
+          GITHUB_COM_TOKEN: ${{ github.token }}
         with:
           renovate-version: ${{ env.RENOVATE_IMAGE_TAG }}
           # Same as the action's default allow-list (RENOVATE_*, LOG_LEVEL,

@@ -26,8 +26,15 @@
 # looks free because the listing failed to show that `.2` already exists),
 # which Renovate would then never see as an update.
 #
+# Credentials are REQUIRED even though this image is public today. Docker Hub
+# answers an unauthenticated request for a *private* repository with the same
+# 404 it uses for one that does not exist, so the 404-means-empty branch above
+# would silently allocate `.1` on every run and overwrite the immutable release
+# each time. Demanding a login keeps that from becoming true the day the
+# repository is made private, and makes a 404 really mean "no such repository".
+#
 # Usage:
-#   next-version.sh <dockerhub-repo> [arch]
+#   DOCKERHUB_USERNAME=... DOCKERHUB_TOKEN=... next-version.sh <dockerhub-repo> [arch]
 #
 # Examples:
 #   next-version.sh anthonysautomations/tinyproxy          # multi-arch stream
@@ -54,8 +61,39 @@ for dep in curl jq; do
     fi
 done
 
+if [[ -z ${DOCKERHUB_USERNAME:-} || -z ${DOCKERHUB_TOKEN:-} ]]; then
+    echo "error: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN must be set; an unauthenticated" >&2
+    echo "       listing cannot tell a private repository from a missing one, and would" >&2
+    echo "       allocate .1 forever and overwrite the existing release" >&2
+    exit 1
+fi
+
 body_file=$(mktemp)
-trap 'rm -f "${body_file}"' EXIT
+# Holds the bearer header: passing it as a curl argument would expose the token
+# in the process list.
+curl_auth=$(mktemp)
+chmod 600 "${curl_auth}"
+trap 'rm -f "${body_file}" "${curl_auth}"' EXIT
+
+# The secret goes over stdin, never argv.
+login_status=$(jq -n --arg u "${DOCKERHUB_USERNAME}" --arg s "${DOCKERHUB_TOKEN}" \
+        '{identifier: $u, secret: $s}' \
+    | curl -sS --retry 3 --retry-delay 2 -o "${body_file}" -w '%{http_code}' \
+        -X POST -H 'Content-Type: application/json' --data @- \
+        'https://hub.docker.com/v2/auth/token') \
+    || { echo "error: could not reach Docker Hub to authenticate" >&2; exit 1; }
+
+if [[ "${login_status}" != "200" ]]; then
+    echo "error: Docker Hub authentication failed (HTTP ${login_status}) for user ${DOCKERHUB_USERNAME}" >&2
+    exit 1
+fi
+
+jwt=$(jq -r '.access_token // .token // empty' "${body_file}")
+if [[ -z "${jwt}" ]]; then
+    echo "error: Docker Hub authentication returned no token" >&2
+    exit 1
+fi
+printf 'header = "Authorization: Bearer %s"\n' "${jwt}" > "${curl_auth}"
 
 date_part=$(date -u +'%Y.%m.%d')
 
@@ -64,7 +102,7 @@ date_part=$(date -u +'%Y.%m.%d')
 # (ever growing) tag history.
 list_url="https://hub.docker.com/v2/repositories/${repo}/tags?page_size=100&name=${date_part}."
 
-list_status=$(curl -sS --retry 3 --retry-delay 2 -o "${body_file}" -w '%{http_code}' "${list_url}") \
+list_status=$(curl -sS -K "${curl_auth}" --retry 3 --retry-delay 2 -o "${body_file}" -w '%{http_code}' "${list_url}") \
     || { echo "error: could not reach Docker Hub to list existing tags for ${repo}" >&2; exit 1; }
 
 case "${list_status}" in
@@ -81,7 +119,8 @@ case "${list_status}" in
     404)
         # First-ever build: the repository does not exist yet, so there are no
         # tags to list. This is the only failure-shaped response treated as
-        # "empty" - everything else below is fatal.
+        # "empty" - everything else below is fatal - and it is trustworthy only
+        # because the request was authenticated.
         echo '{"results":[]}' > "${body_file}"
         ;;
     *)
@@ -110,7 +149,7 @@ tag="${version}${suffix}"
 # handing it back, so a failed/partial listing above can never cause an existing
 # release to be silently overwritten.
 tag_url="https://hub.docker.com/v2/repositories/${repo}/tags/${tag}"
-tag_status=$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 2 "${tag_url}") \
+tag_status=$(curl -sS -K "${curl_auth}" -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 2 "${tag_url}") \
     || { echo "error: could not verify availability of ${repo}:${tag}" >&2; exit 1; }
 
 case "${tag_status}" in
