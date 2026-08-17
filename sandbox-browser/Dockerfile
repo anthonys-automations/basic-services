@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.25
+# syntax=docker/dockerfile:1.26
 
 # Playwright's maintained image supplies compatible Chromium, Firefox, Node.js,
 # and the OS libraries required to automate both browsers.
