@@ -55,7 +55,6 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      repo: ${{ steps.version.outputs.repo }}
       version: ${{ steps.version.outputs.version }}
       base_image: ${{ steps.meta.outputs.base_image }}
       created: ${{ steps.meta.outputs.created }}
@@ -74,10 +73,13 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # Deliberately not exported as a job output: it embeds
+          # DOCKERHUB_NAMESPACE, which equals the DOCKERHUB_USERNAME secret, and
+          # Actions silently drops any job output whose value contains a secret.
+          # Every job rebuilds it from env.DOCKERHUB_NAMESPACE and inputs.service instead.
           repo="${{ env.DOCKERHUB_NAMESPACE }}/${{ inputs.service }}"
           # No arch argument: allocate from the unsuffixed, multi-arch stream.
           version=$(./scripts/next-version.sh "${repo}")
-          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Collect image metadata
@@ -139,7 +141,7 @@ jobs:
           # `push-by-digest` deliberately publishes no tag: an incomplete
           # release must leave nothing that Renovate or a `docker pull` can
           # find. The publish job below assembles the tags.
-          outputs: type=image,name=${{ needs.prepare.outputs.repo }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.DOCKERHUB_NAMESPACE }}/${{ inputs.service }},push-by-digest=true,name-canonical=true,push=true
           # Full provenance lives in labels/SBOM: the tag stays short and
           # sortable while the exact base image and installed package
           # inventory (via the SBOM attestation, generated from the image that
@@ -197,7 +199,7 @@ jobs:
       - name: Verify and create release manifest
         run: |
           set -euo pipefail
-          repo='${{ needs.prepare.outputs.repo }}'
+          repo="${{ env.DOCKERHUB_NAMESPACE }}/${{ inputs.service }}"
           version='${{ needs.prepare.outputs.version }}'
 
           expected_count=$(awk -F, '{ print NF }' <<< "${EXPECTED_PLATFORMS}")
@@ -242,7 +244,7 @@ jobs:
         # moving alias can never point at something the guard above rejected.
         run: |
           set -euo pipefail
-          repo='${{ needs.prepare.outputs.repo }}'
+          repo="${{ env.DOCKERHUB_NAMESPACE }}/${{ inputs.service }}"
           docker buildx imagetools create \
             --tag "${repo}:latest" \
             "${repo}:${{ needs.prepare.outputs.version }}"
@@ -255,9 +257,9 @@ jobs:
           # and points somewhere else by the time anyone reads this.
           {
             echo "## Build Summary"
-            echo "- **Repository:** ${{ needs.prepare.outputs.repo }}"
+            echo "- **Repository:** ${{ env.DOCKERHUB_NAMESPACE }}/${{ inputs.service }}"
             echo "- **Platforms:** ${EXPECTED_PLATFORMS}"
-            echo "- **Release tag:** [${{ needs.prepare.outputs.version }}](https://hub.docker.com/layers/${{ needs.prepare.outputs.repo }}/${{ needs.prepare.outputs.version }}/)"
+            echo "- **Release tag:** [${{ needs.prepare.outputs.version }}](https://hub.docker.com/layers/${{ env.DOCKERHUB_NAMESPACE }}/${{ inputs.service }}/${{ needs.prepare.outputs.version }}/)"
             echo "- **Moving alias:** latest"
             echo "- **Base image:** ${{ needs.prepare.outputs.base_image }}"
             echo "- **Git Hash:** ${{ github.sha }}"
