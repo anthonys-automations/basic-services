@@ -73,6 +73,13 @@ COPY --chmod=755 scripts/firefox scripts/chromium /usr/local/bin/
 
 RUN sed -i 's/^autorun=.*/autorun=Xvnc/' /etc/xrdp/xrdp.ini \
   && grep -q '^autorun=Xvnc' /etc/xrdp/xrdp.ini \
+  # autorun only covers clients that send credentials; everyone else gets the
+  # login window, whose session list is these sections in file order. Xorg is
+  # first and cannot start here, and the -any sections would proxy the client to
+  # any host it names, so Xvnc is left as the only choice.
+  && sed -i '/^\[Xorg\]/,/^\[Xvnc\]/{/^\[Xvnc\]/!d}; /^\[vnc-any\]/,$d' /etc/xrdp/xrdp.ini \
+  && grep -q '^\[Xvnc\]' /etc/xrdp/xrdp.ini \
+  && ! grep -qE '^\[(Xorg|vnc-any|neutrinordp-any)\]' /etc/xrdp/xrdp.ini \
   # /var/log and /etc/ssl are root-owned, so logs and the TLS pair move to the runtime dir.
   && sed -i 's|^certificate=.*|certificate=/run/sandbox/cert.pem|; s|^key_file=.*|key_file=/run/sandbox/key.pem|' /etc/xrdp/xrdp.ini \
   && sed -i 's|^LogFile=.*|LogFile=/run/sandbox/xrdp.log|; s/^EnableSyslog=.*/EnableSyslog=false/' /etc/xrdp/xrdp.ini \

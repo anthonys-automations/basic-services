@@ -13,7 +13,7 @@ The interactive desktop and the SSH automation host are the same container: `ssh
 
 ## Implementation choices
 
-- **Xvnc backend, not Xorg.** `xorgxrdp` expects host privileges and device access that a container does not have. `xrdp.ini` sets `autorun=Xvnc` so sessions start deterministically.
+- **Xvnc backend, not Xorg.** `xorgxrdp` expects host privileges and device access that a container does not have. `xrdp.ini` sets `autorun=Xvnc`, but that only covers clients that send credentials; everyone else gets the login window, which offers the session sections in file order and would otherwise start with `Xorg`. The `Xorg`, `vnc-any` and `neutrinordp-any` sections are deleted from `xrdp.ini` so `Xvnc` is the only choice - which also stops the container being used to proxy RDP or VNC to any host a client names.
 - **XFCE session.** `/etc/xrdp/startwm.sh` clears inherited DBus variables before running `startxfce4`.
 - **Bundled browsers.** Ubuntu's `firefox` package is a snap stub, so browser launchers point to exact Playwright browser paths resolved during image build.
 - **Session tracking, not exclusion.** `pam_exec` creates `/run/sandbox/sessions/<pid>` on session open and removes it on close, for both SSH and XRDP. Concurrent sessions are allowed; readiness is what keeps a claimed container out of the pool. `MaxSessions=1` still limits XRDP to one desktop.
