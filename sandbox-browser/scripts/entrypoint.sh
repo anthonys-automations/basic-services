@@ -49,6 +49,11 @@ prepare_runtime() {
 
   rm -rf "${runtime_dir:?}"/*
   mkdir -p "$sessions_dir" "$ssh_dir"
+  # With a read-only root filesystem these are volumes, so the image's copies are
+  # hidden: recreate what xrdp, X and ICE will not create for a non-root process,
+  # and put back the skeleton the account was created with.
+  mkdir -p /run/xrdp/sockdir /tmp/.X11-unix /tmp/.ICE-unix
+  cp -r --update=none /etc/skel/. /home/user/
   # Private keys and the password hash are written below; sessions get the
   # default back before any of them start.
   prior_umask=$(umask)

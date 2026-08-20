@@ -43,8 +43,7 @@ spec:
         runAsGroup: 10000
         fsGroup: 10000
         seccompProfile:
-          type: Localhost
-          localhostProfile: profiles/audit.json
+          type: RuntimeDefault
       containers:
         - name: sandbox-browser
           image: anthonysautomations/sandbox-browser:latest
@@ -63,6 +62,7 @@ spec:
                   optional: true
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           # Successful only while the sandbox is unclaimed, so a claimed Pod
@@ -92,6 +92,17 @@ spec:
               readOnly: true
             - name: workspace
               mountPath: /home/user/workspace
+            # With a read-only root filesystem, every path written at runtime
+            # needs a volume: the account's home and desktop state, the X and
+            # DBus sockets, the sandbox runtime directory and xrdp's own.
+            - name: home
+              mountPath: /home/user
+            - name: tmp
+              mountPath: /tmp
+            - name: runtime
+              mountPath: /run/sandbox
+            - name: xrdp-run
+              mountPath: /run/xrdp
             # Chromium and Firefox exhaust the default 64 MiB of shared memory.
             - name: dshm
               mountPath: /dev/shm
@@ -110,6 +121,14 @@ spec:
         # Only mounted volumes survive a restart, and a sandbox is meant to
         # start clean; swap in a PVC if work has to outlive the session.
         - name: workspace
+          emptyDir: {}
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: runtime
+          emptyDir: {}
+        - name: xrdp-run
           emptyDir: {}
         - name: dshm
           emptyDir:

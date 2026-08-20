@@ -8,6 +8,13 @@ PidFile /run/sandbox/sshd.pid
 AuthorizedKeysFile /run/sandbox/authorized_keys
 AllowUsers user
 PermitRootLogin no
+# The authorized_keys copy is created here with mode 600, but /run/sandbox is a
+# volume when the root filesystem is read-only, and a projected volume is
+# world-writable no matter what it holds. StrictModes stats every directory
+# above the file, so no subdirectory of the volume - or of the home directory,
+# where the walk stops - can satisfy it. Nothing else in the container can run
+# as another user to exploit that.
+StrictModes no
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 UsePAM yes

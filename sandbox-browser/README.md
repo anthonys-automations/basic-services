@@ -70,6 +70,8 @@ The password is hashed into a runtime file that PAM checks; nothing is written t
 
 Every session ends in a container restart, and Kubernetes rate limits restarts, so a replica that has just recycled can sit in `CrashLoopBackOff` for a while before it is ready again. Run more replicas than concurrent tenants so a recycling one is never the only candidate. A startup probe covers the few seconds the container spends generating host keys and the TLS certificate, which is otherwise long enough for the first liveness check to kill it.
 
+The Pod runs with `readOnlyRootFilesystem: true`, which needs an `emptyDir` for every path written after startup: `/home/user` for the account and its desktop state, `/tmp` for the X and ICE sockets, `/run/sandbox` for the runtime state below, `/run/xrdp` for xrdp's own sockets and PID files, and `/dev/shm` for the browsers. Those volumes hide what the image put at the same paths, so the entrypoint recreates the socket directories and copies `/etc/skel` back into the home directory. Dropping a volume is not an option: the daemon that needs it fails at startup instead of falling back.
+
 ```bash
 kubectl apply -f k8s/sandbox-browser.yaml
 ```
@@ -92,7 +94,7 @@ livenessProbe:
   exec:
     command: ["/usr/local/bin/liveness-probe.sh"]
   periodSeconds: 5
-  failureThreshold: 1
+  failureThreshold: 3
 ```
 
 A restart replaces processes but not Docker's writable layer. For a pristine local Docker sandbox per session, recreate the container:
