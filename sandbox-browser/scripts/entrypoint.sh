@@ -23,7 +23,9 @@ cleanup() {
 }
 
 trap cleanup EXIT
-trap 'exit 143' TERM INT
+# A stop request is not a failure: exiting 143 makes Kubernetes report Error and
+# count the Pod towards CrashLoopBackOff.
+trap 'exit 0' TERM INT
 
 process_alive() {
   local stat

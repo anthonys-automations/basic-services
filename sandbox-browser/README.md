@@ -68,6 +68,8 @@ The password is hashed into a runtime file that PAM checks; nothing is written t
 
 [k8s/sandbox-browser.yaml](k8s/sandbox-browser.yaml) is a working example of a Deployment and a ClusterIP Service. The readiness probe is what makes a replica pool usable: a claimed Pod leaves the Service endpoints, so the next client lands on an unused one.
 
+Every session ends in a container restart, and Kubernetes rate limits restarts, so a replica that has just recycled can sit in `CrashLoopBackOff` for a while before it is ready again. Run more replicas than concurrent tenants so a recycling one is never the only candidate. A startup probe covers the few seconds the container spends generating host keys and the TLS certificate, which is otherwise long enough for the first liveness check to kill it.
+
 ```bash
 kubectl apply -f k8s/sandbox-browser.yaml
 ```

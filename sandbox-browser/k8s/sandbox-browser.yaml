@@ -6,6 +6,11 @@
 # concurrent tenants; the readiness probe keeps claimed Pods out of the Service
 # endpoints, so a client is only ever routed to an unused one.
 #
+# Every session therefore ends in a container restart, which Kubernetes rate
+# limits: back-to-back sessions on one replica hit CrashLoopBackOff and its
+# growing delay. Run more replicas than concurrent tenants so a recycling one is
+# never the only candidate.
+#
 # Create the referenced secrets first:
 #   kubectl create secret generic sandbox-browser-ssh \
 #     --from-file=authorized_keys=$HOME/.ssh/sandbox-browser.pub
@@ -67,11 +72,19 @@ spec:
               command: ["/usr/local/bin/readiness-probe.sh"]
             periodSeconds: 2
             failureThreshold: 1
+          # Host keys and the TLS certificate are generated before the listeners
+          # come up, which takes a few seconds at this CPU request. Without a
+          # startup probe the first liveness check kills the container instead.
+          startupProbe:
+            exec:
+              command: ["/usr/local/bin/liveness-probe.sh"]
+            periodSeconds: 2
+            failureThreshold: 30
           livenessProbe:
             exec:
               command: ["/usr/local/bin/liveness-probe.sh"]
             periodSeconds: 5
-            failureThreshold: 1
+            failureThreshold: 3
           volumeMounts:
             - name: authorized-keys
               mountPath: /home/user/.ssh/authorized_keys
