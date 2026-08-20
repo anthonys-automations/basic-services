@@ -1,3 +1,6 @@
 #!/bin/sh
 # Ubuntu's firefox package is a snap stub, so use Playwright's bundled build.
-exec /opt/sandbox-browser/firefox "$@"
+# That build reapplies Playwright's automation preferences at every start, which
+# throws away whatever the desktop session changed; the variable skips them, see
+# the playwright.cfg step in the Dockerfile.
+exec env SANDBOX_BROWSER_INTERACTIVE=1 /opt/sandbox-browser/firefox "$@"

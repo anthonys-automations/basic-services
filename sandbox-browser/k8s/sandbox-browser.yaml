@@ -144,7 +144,7 @@ metadata:
   labels:
     app.kubernetes.io/name: sandbox-browser
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app.kubernetes.io/name: sandbox-browser
   ports:

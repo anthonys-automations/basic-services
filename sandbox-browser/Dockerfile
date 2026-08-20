@@ -75,6 +75,17 @@ RUN mkdir -p /opt/sandbox-browser \
   && ln -s "$(node -e 'process.stdout.write(require("playwright").firefox.executablePath())')" /opt/sandbox-browser/firefox \
   && ln -s "$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')" /opt/sandbox-browser/chromium
 
+# Playwright's Firefox applies playwright.cfg on every start, and autoconfig
+# writes to the user branch, not the default one: a home page, PDF viewer or
+# spell check setting made in the desktop session is silently overwritten the
+# next time the browser starts. Automation still wants those prefs, so the file
+# is wrapped in the variable only the interactive launcher exports. Firefox
+# requires the first line to be a comment and ignores it, hence the split.
+RUN cfg="$(dirname "$(readlink -f /opt/sandbox-browser/firefox)")/playwright.cfg" \
+  && { head -n 1 "$cfg"; echo 'if (!getenv("SANDBOX_BROWSER_INTERACTIVE")) {'; tail -n +2 "$cfg"; echo '}'; } > "$cfg.guarded" \
+  && mv "$cfg.guarded" "$cfg" \
+  && grep -q 'SANDBOX_BROWSER_INTERACTIVE' "$cfg"
+
 COPY --chmod=755 scripts/firefox scripts/chromium /usr/local/bin/
 
 # The default WebBrowser helper is debian-sensible-browser, which finds nothing
@@ -84,6 +95,20 @@ COPY --chmod=755 scripts/firefox scripts/chromium /usr/local/bin/
 RUN sed -i 's/^WebBrowser=.*/WebBrowser=firefox/' /etc/xdg/xfce4/helpers.rc \
   && grep -q '^WebBrowser=firefox' /etc/xdg/xfce4/helpers.rc
 COPY config/xfce4/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
+
+# glib only reports the XDG document, picture and video directories when this
+# file exists, and Firefox treats the missing answer as an error on every
+# start. The entrypoint copies /etc/skel into the fresh home, so it lands there.
+COPY <<'EOF' /etc/skel/.config/user-dirs.dirs
+XDG_DESKTOP_DIR="$HOME/Desktop"
+XDG_DOWNLOAD_DIR="$HOME/Downloads"
+XDG_DOCUMENTS_DIR="$HOME/Documents"
+XDG_MUSIC_DIR="$HOME/Music"
+XDG_PICTURES_DIR="$HOME/Pictures"
+XDG_VIDEOS_DIR="$HOME/Videos"
+XDG_TEMPLATES_DIR="$HOME/Templates"
+XDG_PUBLICSHARE_DIR="$HOME/Public"
+EOF
 
 RUN sed -i 's/^autorun=.*/autorun=Xvnc/' /etc/xrdp/xrdp.ini \
   && grep -q '^autorun=Xvnc' /etc/xrdp/xrdp.ini \

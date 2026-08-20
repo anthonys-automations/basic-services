@@ -109,6 +109,7 @@ In Kubernetes, only mounted volumes carry state between restarted containers.
 
 - Ubuntu's `firefox` apt package is a snap stub that cannot run in a container, so both launchers point at Playwright's bundled builds.
 - Chromium's internal sandbox requires user namespaces. Where the container forbids them, the `chromium` launcher falls back to `--no-sandbox` and the container boundary remains the isolation layer. Firefox handles this case itself.
+- Playwright's Firefox build carries an autoconfig file that reapplies its automation preferences on every start, on the user branch, so a home page, PDF viewer or spell check setting chosen in the desktop session was silently discarded at the next launch. The image wraps that file in a check for `SANDBOX_BROWSER_INTERACTIVE`, which only the `firefox` launcher sets: the desktop gets a stock browser that keeps its settings, and Playwright, which runs the binary directly, is unaffected.
 
 ## Version policy
 
