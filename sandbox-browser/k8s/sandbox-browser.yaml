@@ -38,7 +38,8 @@ spec:
         runAsGroup: 10000
         fsGroup: 10000
         seccompProfile:
-          type: RuntimeDefault
+          type: Localhost
+          localhostProfile: profiles/audit.json
       containers:
         - name: sandbox-browser
           image: anthonysautomations/sandbox-browser:latest

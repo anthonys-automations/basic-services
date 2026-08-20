@@ -32,9 +32,15 @@ process_alive() {
   [[ "${stat##*) }" != Z\ * ]]
 }
 
+# An absent optional Secret still gets a subPath mount, which kubelet creates as
+# an empty directory, so the mount path existing proves nothing.
+have_mounted_keys() {
+  [[ -f "$mounted_keys" && -s "$mounted_keys" ]]
+}
+
 prepare_runtime() {
   local prior_umask
-  [[ -s "$mounted_keys" || -n "${XRDP_PASSWORD:-}" ]] || {
+  [[ -n "${XRDP_PASSWORD:-}" ]] || have_mounted_keys || {
     echo "Provide an SSH public key at $mounted_keys, XRDP_PASSWORD, or both." >&2
     exit 1
   }
@@ -49,7 +55,7 @@ prepare_runtime() {
   # sshd refuses a key file owned by anyone but the account or root, which a
   # bind-mounted or Secret-projected file rarely is, so it is copied in.
   : > "$authorized_keys"
-  if [[ -s "$mounted_keys" ]]; then
+  if have_mounted_keys; then
     cat "$mounted_keys" > "$authorized_keys"
   fi
 
