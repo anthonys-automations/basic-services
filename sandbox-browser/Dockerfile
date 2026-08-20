@@ -53,6 +53,10 @@ RUN apt-get update \
   && mkdir -p /run/sshd /run/xrdp/sockdir /run/sandbox /home/user/.ssh \
   && chown -R user:user /home/user/.ssh /run/xrdp /run/sandbox \
   && chmod 700 /home/user/.ssh /run/sandbox \
+  # X and ICE refuse to create these themselves for a non-root server, which
+  # costs xfce4-session its session management.
+  && mkdir -p /tmp/.X11-unix /tmp/.ICE-unix \
+  && chmod 1777 /tmp/.X11-unix /tmp/.ICE-unix \
   && dbus-uuidgen > /etc/machine-id \
   # The package's install-time host keys are never used; the entrypoint makes its own.
   && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
@@ -60,7 +64,9 @@ RUN apt-get update \
   # Playwright resolves browsers by revision, so a pin that disagrees with the base image builds cleanly and only fails at runtime.
   && node -e 'const p=require("playwright"),f=require("fs");for(const b of [p.chromium,p.firefox]){const e=b.executablePath();if(!f.existsSync(e))throw new Error("npm playwright does not match the base image browsers: "+e)}' \
   # SSH sessions do not inherit image ENV, so PAM supplies these to agents too.
-  && printf 'PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\nNODE_PATH=/opt/playwright/node_modules\n' >> /etc/environment
+  # BROWSER covers the tools that consult it; NO_AT_BRIDGE stops every GTK app
+  # warning about the accessibility bus this image has no reason to run.
+  && printf 'PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\nNODE_PATH=/opt/playwright/node_modules\nBROWSER=/usr/local/bin/firefox\nNO_AT_BRIDGE=1\n' >> /etc/environment
 
 # Pin launchers to the image's single installed browser revisions.
 # Asking playwright for the paths avoids hardcoding a per-version directory layout,
@@ -70,6 +76,14 @@ RUN mkdir -p /opt/sandbox-browser \
   && ln -s "$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')" /opt/sandbox-browser/chromium
 
 COPY --chmod=755 scripts/firefox scripts/chromium /usr/local/bin/
+
+# The default WebBrowser helper is debian-sensible-browser, which finds nothing
+# here and fails the panel launcher with "Input/output error"; the stock firefox
+# helper resolves to the wrapper above. Compositing is off because Xvnc already
+# provides one, and xfwm4 would only spend RDP bandwidth on it.
+RUN sed -i 's/^WebBrowser=.*/WebBrowser=firefox/' /etc/xdg/xfce4/helpers.rc \
+  && grep -q '^WebBrowser=firefox' /etc/xdg/xfce4/helpers.rc
+COPY config/xfce4/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
 
 RUN sed -i 's/^autorun=.*/autorun=Xvnc/' /etc/xrdp/xrdp.ini \
   && grep -q '^autorun=Xvnc' /etc/xrdp/xrdp.ini \
@@ -92,7 +106,10 @@ RUN sed -i 's/^autorun=.*/autorun=Xvnc/' /etc/xrdp/xrdp.ini \
   && grep -q '^param=-MaxDisconnectionTime=10' /etc/xrdp/sesman.ini \
   # One desktop at a time; SSH runs alongside it.
   && sed -i 's/^MaxSessions=.*/MaxSessions=1/' /etc/xrdp/sesman.ini \
-  && grep -q '^MaxSessions=1' /etc/xrdp/sesman.ini
+  && grep -q '^MaxSessions=1' /etc/xrdp/sesman.ini \
+  # Drive redirection needs /dev/fuse, which an unprivileged container is not given.
+  && sed -i 's/^#EnableFuseMount=false/EnableFuseMount=false/' /etc/xrdp/sesman.ini \
+  && grep -q '^EnableFuseMount=false' /etc/xrdp/sesman.ini
 
 COPY --from=shim /tmp/noinitgroups.so /usr/local/lib/noinitgroups.so
 
@@ -105,11 +122,8 @@ COPY --chmod=755 scripts/readiness-probe.sh /usr/local/bin/readiness-probe.sh
 COPY --chmod=755 scripts/liveness-probe.sh /usr/local/bin/liveness-probe.sh
 COPY --chmod=755 scripts/startwm.sh /etc/xrdp/startwm.sh
 
-# PAM calls this on open and close of every authenticated desktop or SSH session.
-# pam_motd is dropped because it writes to root-owned /run.
-RUN sed -i '/pam_motd/s/^/#/' /etc/pam.d/sshd \
-  && printf '\nsession required pam_exec.so quiet /usr/local/bin/session-hook.sh\n' >> /etc/pam.d/sshd
-
+# Both stacks run pam_exec on open and close of every authenticated session.
+COPY config/pam.d/sshd /etc/pam.d/sshd
 COPY config/pam.d/xrdp-sesman /etc/pam.d/xrdp-sesman
 
 # Keep published containers traceable to the source revision.

@@ -1,0 +1,11 @@
+# Replaces the distribution stack, whose account phase runs pam_unix. A non-root
+# sshd cannot read /etc/shadow, so pam_unix defers to the setuid unix_chkpwd
+# helper - which gains nothing under no-new-privs (allowPrivilegeEscalation:
+# false), so every login is denied by PAM account configuration.
+# Authentication is public-key only: /etc/ssh/sshd_config disables password and
+# keyboard-interactive, the two paths that would reach the auth stack.
+auth     required  pam_permit.so
+account  required  pam_permit.so
+session  required  pam_exec.so quiet /usr/local/bin/session-hook.sh
+session  required  pam_env.so
+session  required  pam_permit.so
