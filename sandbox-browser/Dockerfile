@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.25
+# syntax=docker/dockerfile:1.26
 
 # xrdp-sesman drops privileges with setgid, initgroups and setuid before it
 # starts a desktop. All three are no-ops when the target account is the one
