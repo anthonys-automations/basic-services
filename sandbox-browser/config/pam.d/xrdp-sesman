@@ -1,0 +1,10 @@
+# Replaces the distribution stack, which authenticates and accounts through
+# pam_unix; every one of those steps needs privileges this container drops.
+# The password file only exists while XRDP_PASSWORD is set, so an agent-only
+# container rejects every RDP login exactly as a locked account used to.
+auth     required  pam_pwdfile.so pwdfile=/run/sandbox/xrdp.passwd
+auth     required  pam_permit.so
+account  required  pam_permit.so
+session  required  pam_exec.so quiet /usr/local/bin/session-hook.sh
+session  required  pam_env.so
+session  required  pam_permit.so

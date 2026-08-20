@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-runtime_dir="${SANDBOX_RUNTIME_DIR:-/run/sandbox}"
+runtime_dir=/run/sandbox
 
 # Both listeners stay up for the whole container life, so liveness is their liveness.
 for name in sshd sesman xrdp; do

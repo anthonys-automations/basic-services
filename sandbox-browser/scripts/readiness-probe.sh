@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-runtime_dir="${SANDBOX_RUNTIME_DIR:-/run/sandbox}"
+runtime_dir=/run/sandbox
 
 # The first session drops the ready marker; the sessions directory is the same fact,
 # checked directly so a probe never advertises a container that is already taken.

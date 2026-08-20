@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-runtime_dir="${SANDBOX_RUNTIME_DIR:-/run/sandbox}"
+runtime_dir=/run/sandbox
 sessions_dir="$runtime_dir/sessions"
 
 # PAM runs this as a child of the sshd or xrdp-sesman process that owns the session,

@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-runtime_dir="${SANDBOX_RUNTIME_DIR:-/run/sandbox}"
+# Named in /etc/ssh/sshd_config, /etc/pam.d/xrdp-sesman and xrdp.ini, none of
+# which this container can edit, so the path is fixed rather than configurable.
+runtime_dir=/run/sandbox
 sessions_dir="$runtime_dir/sessions"
 ready_marker="$runtime_dir/ready"
-authorized_keys=/home/user/.ssh/authorized_keys
+ssh_dir="$runtime_dir/ssh"
+# /etc/pam.d/xrdp-sesman names this file, and only root can edit that.
+xrdp_passwd="$runtime_dir/xrdp.passwd"
+mounted_keys=/home/user/.ssh/authorized_keys
+authorized_keys="$runtime_dir/authorized_keys"
 daemon_pids=()
 
 cleanup() {
-  rm -rf "$runtime_dir"
+  # The directory itself is created by the image; an unprivileged process
+  # cannot put it back, so only its contents go.
+  rm -rf "${runtime_dir:?}"/*
   for pid in ${daemon_pids[@]+"${daemon_pids[@]}"}; do
     kill "$pid" 2>/dev/null || true
   done
@@ -25,26 +33,40 @@ process_alive() {
 }
 
 prepare_runtime() {
-  [[ -s "$authorized_keys" || -n "${XRDP_PASSWORD:-}" ]] || {
-    echo "Provide an SSH public key at $authorized_keys, XRDP_PASSWORD, or both." >&2
+  local prior_umask
+  [[ -s "$mounted_keys" || -n "${XRDP_PASSWORD:-}" ]] || {
+    echo "Provide an SSH public key at $mounted_keys, XRDP_PASSWORD, or both." >&2
     exit 1
   }
 
-  rm -rf "$runtime_dir"
-  mkdir -p "$sessions_dir"
-  chmod 700 "$runtime_dir"
+  rm -rf "${runtime_dir:?}"/*
+  mkdir -p "$sessions_dir" "$ssh_dir"
+  # Private keys and the password hash are written below; sessions get the
+  # default back before any of them start.
+  prior_umask=$(umask)
+  umask 077
 
-  rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
-  ssh-keygen -A
-  make-ssl-cert generate-default-snakeoil --force-overwrite
+  # sshd refuses a key file owned by anyone but the account or root, which a
+  # bind-mounted or Secret-projected file rarely is, so it is copied in.
+  : > "$authorized_keys"
+  if [[ -s "$mounted_keys" ]]; then
+    cat "$mounted_keys" > "$authorized_keys"
+  fi
 
-  # Without a password the account stays locked, so RDP rejects every login.
+  ssh-keygen -q -t ed25519 -N '' -f "$ssh_dir/ssh_host_ed25519_key"
+  ssh-keygen -q -t rsa -b 3072 -N '' -f "$ssh_dir/ssh_host_rsa_key"
+
+  openssl req -x509 -noenc -newkey rsa:2048 -days 365 -subj '/CN=sandbox-browser' \
+    -keyout "$runtime_dir/key.pem" -out "$runtime_dir/cert.pem" 2>/dev/null
+
+  # Without this file pam_pwdfile fails every RDP login, which is the agent-only case.
   if [[ -n "${XRDP_PASSWORD:-}" ]]; then
-    echo "user:${XRDP_PASSWORD}" | chpasswd
+    printf 'user:%s\n' "$(printf '%s' "$XRDP_PASSWORD" | openssl passwd -6 -stdin)" > "$xrdp_passwd"
     unset XRDP_PASSWORD
   fi
 
-  rm -f /var/run/xrdp/xrdp.pid /var/run/xrdp/xrdp-sesman.pid
+  rm -f /run/xrdp/xrdp.pid /run/xrdp/xrdp-sesman.pid
+  umask "$prior_umask"
 }
 
 start_daemon() {
@@ -57,12 +79,9 @@ start_daemon() {
 }
 
 start_daemons() {
-  start_daemon sshd /usr/sbin/sshd -D -e \
-    -o PermitRootLogin=no \
-    -o PasswordAuthentication=no \
-    -o KbdInteractiveAuthentication=no \
-    -o AllowUsers=user
-  start_daemon sesman xrdp-sesman --nodaemon
+  start_daemon sshd /usr/sbin/sshd -D -e
+  # sesman aborts its session setup when setgroups is refused; see the Dockerfile.
+  start_daemon sesman env LD_PRELOAD=/usr/local/lib/noinitgroups.so xrdp-sesman --nodaemon
   start_daemon xrdp xrdp --nodaemon
 }
 

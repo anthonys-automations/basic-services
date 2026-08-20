@@ -1,0 +1,123 @@
+# Example deployment of one sandbox-browser instance.
+#
+# The container claims itself on the first SSH or RDP session and exits when the
+# last one ends, so the Deployment - not a long-lived Pod - is what returns a
+# clean sandbox to the Service. Scale the replica count to the number of
+# concurrent tenants; the readiness probe keeps claimed Pods out of the Service
+# endpoints, so a client is only ever routed to an unused one.
+#
+# Create the referenced secrets first:
+#   kubectl create secret generic sandbox-browser-ssh \
+#     --from-file=authorized_keys=$HOME/.ssh/sandbox-browser.pub
+#   kubectl create secret generic sandbox-browser-rdp \
+#     --from-literal=xrdp-password='choose-a-strong-password'
+#
+# Omit the RDP secret (and its env entry) for agent-only deployments: without a
+# password file the container rejects every RDP login.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-browser
+  labels:
+    app.kubernetes.io/name: sandbox-browser
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sandbox-browser
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sandbox-browser
+    spec:
+      # The image builds its own account at 10000; 1000 and 1001 belong to the
+      # base image. fsGroup makes mounted volumes writable for it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 10000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sandbox-browser
+          image: anthonysautomations/sandbox-browser:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: ssh
+              containerPort: 2222
+            - name: rdp
+              containerPort: 3389
+          env:
+            - name: XRDP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-browser-rdp
+                  key: xrdp-password
+                  optional: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          # Successful only while the sandbox is unclaimed, so a claimed Pod
+          # leaves the Service endpoints before a second client reaches it.
+          readinessProbe:
+            exec:
+              command: ["/usr/local/bin/readiness-probe.sh"]
+            periodSeconds: 2
+            failureThreshold: 1
+          livenessProbe:
+            exec:
+              command: ["/usr/local/bin/liveness-probe.sh"]
+            periodSeconds: 5
+            failureThreshold: 1
+          volumeMounts:
+            - name: authorized-keys
+              mountPath: /home/user/.ssh/authorized_keys
+              subPath: authorized_keys
+              readOnly: true
+            - name: workspace
+              mountPath: /home/user/workspace
+            # Chromium and Firefox exhaust the default 64 MiB of shared memory.
+            - name: dshm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              memory: 4Gi
+      volumes:
+        - name: authorized-keys
+          secret:
+            secretName: sandbox-browser-ssh
+            defaultMode: 0444
+            optional: true
+        # Only mounted volumes survive a restart, and a sandbox is meant to
+        # start clean; swap in a PVC if work has to outlive the session.
+        - name: workspace
+          emptyDir: {}
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+---
+# Headless would leave clients to pick a Pod themselves; a ClusterIP lets the
+# readiness gate do the choosing.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-browser
+  labels:
+    app.kubernetes.io/name: sandbox-browser
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: sandbox-browser
+  ports:
+    - name: ssh
+      port: 2222
+      targetPort: ssh
+    - name: rdp
+      port: 3389
+      targetPort: rdp
