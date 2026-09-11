@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.26
+# syntax=docker/dockerfile:1.27
 
 # xrdp-sesman drops privileges with setgid, initgroups and setuid before it
 # starts a desktop. All three are no-ops when the target account is the one
@@ -7,7 +7,7 @@
 # unset and Xvnc is launched with an empty -rfbauth, so the session dies on
 # connect. Returning success for the one call the container cannot make keeps
 # the group list sesman was going to set anyway.
-FROM mcr.microsoft.com/playwright:v1.62.1-noble AS shim
+FROM mcr.microsoft.com/playwright:v1.63.0-noble AS shim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends gcc libc6-dev \
   && rm -rf /var/lib/apt/lists/*
@@ -18,7 +18,7 @@ RUN gcc -O2 -shared -fPIC -o /tmp/noinitgroups.so /tmp/noinitgroups.c
 
 # Playwright's maintained image supplies compatible Chromium, Firefox, Node.js,
 # and the OS libraries required to automate both browsers.
-FROM mcr.microsoft.com/playwright:v1.62.1-noble
+FROM mcr.microsoft.com/playwright:v1.63.0-noble
 
 ENV DEBIAN_FRONTEND=noninteractive \
   PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
@@ -60,7 +60,7 @@ RUN apt-get update \
   && dbus-uuidgen > /etc/machine-id \
   # The package's install-time host keys are never used; the entrypoint makes its own.
   && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
-  && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --prefix /opt/playwright playwright@1.62.1 \
+  && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --prefix /opt/playwright playwright@1.63.0 \
   # Playwright resolves browsers by revision, so a pin that disagrees with the base image builds cleanly and only fails at runtime.
   && node -e 'const p=require("playwright"),f=require("fs");for(const b of [p.chromium,p.firefox]){const e=b.executablePath();if(!f.existsSync(e))throw new Error("npm playwright does not match the base image browsers: "+e)}' \
   # SSH sessions do not inherit image ENV, so PAM supplies these to agents too.
