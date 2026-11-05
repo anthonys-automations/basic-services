@@ -14,7 +14,7 @@
 # Every architecture is validated, on the same runners the release pipeline
 # uses, so an arm64-only Dockerfile break is caught here instead of at release
 # time. Native GitHub-hosted runners rather than qemu: emulated builds of
-# sandbox-browser are slow enough to be a problem.
+# sandbox-browser and devbox are slow enough to be a problem.
 name: Validate Image Builds
 
 on:
@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [exim, postfix, tinyproxy, sandbox-browser]
+        service: [exim, postfix, tinyproxy, sandbox-browser, devbox]
         platform: [linux/amd64, linux/arm64]
         # Matched on `platform` so each combination gains the right runner,
         # rather than adding standalone jobs.

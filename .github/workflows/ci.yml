@@ -15,6 +15,7 @@ jobs:
       postfix: ${{ steps.changes.outputs.postfix }}
       tinyproxy: ${{ steps.changes.outputs.tinyproxy }}
       sandbox-browser: ${{ steps.changes.outputs.sandbox-browser }}
+      devbox: ${{ steps.changes.outputs.devbox }}
     
     steps:
       - name: Checkout repository
@@ -35,6 +36,8 @@ jobs:
               - 'tinyproxy/**'
             sandbox-browser:
               - 'sandbox-browser/**'
+            devbox:
+              - 'devbox/**'
 
   build-exim:
     needs: detect-changes
@@ -60,9 +63,15 @@ jobs:
     uses: ./.github/workflows/build-sandbox-browser.yml
     secrets: inherit
 
+  build-devbox:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.devbox == 'true'
+    uses: ./.github/workflows/build-devbox.yml
+    secrets: inherit
+
   summary:
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-exim, build-postfix, build-tinyproxy, build-sandbox-browser]
+    needs: [detect-changes, build-exim, build-postfix, build-tinyproxy, build-sandbox-browser, build-devbox]
     if: always()
     
     steps:
@@ -74,9 +83,11 @@ jobs:
           echo "- **postfix:** ${{ needs.detect-changes.outputs.postfix }}" >> $GITHUB_STEP_SUMMARY
           echo "- **tinyproxy:** ${{ needs.detect-changes.outputs.tinyproxy }}" >> $GITHUB_STEP_SUMMARY
           echo "- **sandbox-browser:** ${{ needs.detect-changes.outputs.sandbox-browser }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **devbox:** ${{ needs.detect-changes.outputs.devbox }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Build Status" >> $GITHUB_STEP_SUMMARY
           echo "- **exim:** ${{ needs.build-exim.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **postfix:** ${{ needs.build-postfix.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **tinyproxy:** ${{ needs.build-tinyproxy.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **sandbox-browser:** ${{ needs.build-sandbox-browser.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **devbox:** ${{ needs.build-devbox.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY

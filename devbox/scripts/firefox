@@ -1,0 +1,4 @@
+#!/bin/sh
+# Ubuntu's firefox package is a snap stub that cannot run in a container, so use
+# Playwright's bundled build. There is no desktop here: pass --headless.
+exec /opt/devbox/firefox "$@"

@@ -19,9 +19,10 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Keep the sandbox-browser Playwright npm package aligned with its base image tag. The npm registry and the MCR tag list release independently, so looking this up on the npm datasource would let the two pins drift to different versions; Playwright resolves browsers by revision, so that drift builds cleanly and only fails at runtime. Driving this pin from the same docker tag list as the FROM line (with the 'v'/'-noble' decoration stripped) means both updates resolve to the same version or neither moves.",
+      "description": "Keep the sandbox-browser and devbox Playwright npm package aligned with its base image tag. The npm registry and the MCR tag list release independently, so looking this up on the npm datasource would let the two pins drift to different versions; Playwright resolves browsers by revision, so that drift builds cleanly and only fails at runtime. Driving this pin from the same docker tag list as the FROM line (with the 'v'/'-noble' decoration stripped) means both updates resolve to the same version or neither moves.",
       "managerFilePatterns": [
-        "/^sandbox-browser\\/Dockerfile$/"
+        "/^sandbox-browser\\/Dockerfile$/",
+        "/^devbox\\/Dockerfile$/"
       ],
       "matchStrings": [
         "playwright@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
@@ -29,6 +30,16 @@
       "depNameTemplate": "mcr.microsoft.com/playwright",
       "datasourceTemplate": "docker",
       "extractVersionTemplate": "^v(?<version>\\d+\\.\\d+\\.\\d+)-noble$"
+    },
+    {
+      "customType": "regex",
+      "description": "devbox installs its tools from release downloads, PyPI and npm rather than the distribution, so each version is an ARG preceded by a '# renovate:' comment naming its datasource and package. extractVersion strips decorations such as Terraform's 'v' tag prefix. Matched updates fall into the 'all dependencies' group through the custom.regex manager.",
+      "managerFilePatterns": [
+        "/^devbox\\/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+ARG \\w+_VERSION=(?<currentValue>\\S+)"
+      ]
     }
   ],
   "packageRules": [

@@ -1,0 +1,46 @@
+# Replaces the distribution config wholesale, so no sshd_config.d include.
+# Host keys and the authorized_keys copy live under /run/devbox because
+# /etc/ssh is root-owned and this sshd is not.
+Port 2222
+HostKey /run/devbox/ssh/ssh_host_ed25519_key
+HostKey /run/devbox/ssh/ssh_host_rsa_key
+PidFile /run/devbox/sshd.pid
+# Only the operator-supplied key list is honoured. A key a session writes into
+# ~/.ssh/authorized_keys would otherwise survive its removal from the Secret,
+# because the home directory is persistent.
+AuthorizedKeysFile /run/devbox/authorized_keys
+AllowUsers user
+PermitRootLogin no
+# /run/devbox is a volume when the root filesystem is read-only, and StrictModes
+# stats every directory above the key file, which a volume mount cannot satisfy.
+# There is no second account in the container to exploit the relaxation.
+StrictModes no
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM yes
+PermitUserEnvironment no
+LoginGraceTime 30
+MaxAuthTries 3
+
+# A long-running box serves several people or agents at once. MaxSessions is per
+# connection (multiplexed channels); MaxStartups throttles unauthenticated ones.
+MaxSessions 20
+MaxStartups 10:30:60
+# Reap connections whose client vanished; tmux sessions survive the disconnect.
+ClientAliveInterval 60
+ClientAliveCountMax 3
+
+# -L into the box (a dev server, an OAuth callback) is useful; the box opening
+# ports on the client side or on other interfaces is not.
+AllowTcpForwarding local
+GatewayPorts no
+PermitTunnel no
+AllowStreamLocalForwarding no
+X11Forwarding no
+# Lets git and ansible reach other hosts with the client's keys without copying
+# them in. Clients opt in per connection with -A; leave it off for untrusted boxes.
+AllowAgentForwarding yes
+
+Subsystem sftp /usr/lib/openssh/sftp-server

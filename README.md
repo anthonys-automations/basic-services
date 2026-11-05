@@ -1,6 +1,6 @@
 # basic-services
 
-Service images (`exim`, `postfix`, `tinyproxy`, `sandbox-browser`) published to
+Service images (`exim`, `postfix`, `tinyproxy`, `sandbox-browser`, `devbox`) published to
 DockerHub under the `anthonysautomations` namespace.
 
 The source here changes very rarely. Almost every release is a rebuild that picks
@@ -105,7 +105,7 @@ var or label alone.
 
 `.github/workflows/build-image.yml` is a reusable workflow; the per-service
 workflows (`build-exim.yml`, `build-postfix.yml`, `build-tinyproxy.yml`,
-`build-sandbox-browser.yml`) supply the inputs and triggers, and `ci.yml` invokes
+`build-sandbox-browser.yml`, `build-devbox.yml`) supply the inputs and triggers, and `ci.yml` invokes
 them on relevant path changes. Each also runs weekly and on manual dispatch.
 
 It runs in three stages:
@@ -123,7 +123,7 @@ The publish job depends on all build jobs succeeding, with no `if: always()`.
 That dependency is the safety mechanism: a failed arm64 build produces no release
 rather than an amd64-only one.
 
-`.github/workflows/validate-build.yml` builds all four images on both
+`.github/workflows/validate-build.yml` builds every service image on both
 architectures **without publishing**. It is manually dispatchable and is what the
 Renovate workflow triggers on dependency branches, so a base-image bump is built
 for every architecture before it merges without ever allocating a release
@@ -163,7 +163,7 @@ acceptable (e.g. local experimentation, never for an audited release).
 
 `.github/workflows/renovate.yml` runs a self-hosted Renovate weekly (Friday
 03:00 UTC) and on manual dispatch, keeping pinned base images, the Playwright npm
-package paired with sandbox-browser, and GitHub Actions versions current.
+package paired with sandbox-browser and devbox, the tools pinned in the devbox Dockerfile, and GitHub Actions versions current.
 
 It authenticates with the built-in `GITHUB_TOKEN`; no secret is needed. Three
 consequences follow from that:

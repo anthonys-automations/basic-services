@@ -1,0 +1,142 @@
+# Example deployment of one long-running devbox.
+#
+# Unlike sandbox-browser this is a pet, not a pool member: it is never claimed
+# or recycled, it serves any number of concurrent SSH sessions, and its home
+# directory lives on a PersistentVolumeClaim so CLI logins, configuration and
+# work survive Pod restarts and image upgrades. A StatefulSet gives it a stable
+# name and keeps the claim bound to it; scale it to 0, not beyond 1.
+#
+# Create the referenced secrets first:
+#   kubectl create secret generic devbox-ssh \
+#     --from-file=authorized_keys=$HOME/.ssh/devbox.pub
+#
+# Optionally pin the SSH host identity instead of letting the container generate
+# one into the home volume on first start:
+#   ssh-keygen -t ed25519 -N '' -f ssh_host_ed25519_key
+#   kubectl create secret generic devbox-host-keys \
+#     --from-file=ssh_host_ed25519_key
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: devbox
+  labels:
+    app.kubernetes.io/name: devbox
+spec:
+  replicas: 1
+  serviceName: devbox
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: devbox
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: devbox
+    spec:
+      # The image builds its own account at 10000; 1000 and 1001 belong to the
+      # base image. fsGroup makes the volumes and secrets readable for it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 10000
+        seccompProfile:
+          type: RuntimeDefault
+      # Gives open sessions a moment to notice before sshd is stopped.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: devbox
+          image: anthonysautomations/devbox:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: ssh
+              containerPort: 2222
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Generating host keys on first start against an empty home takes a
+          # few seconds at this CPU request.
+          startupProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: authorized-keys
+              mountPath: /etc/devbox/authorized_keys
+              subPath: authorized_keys
+              readOnly: true
+            - name: host-keys
+              mountPath: /etc/devbox/host-keys
+              readOnly: true
+            - name: home
+              mountPath: /home/user
+            # With a read-only root filesystem, every other path written at
+            # runtime needs a volume: scratch space and sshd's runtime state.
+            - name: tmp
+              mountPath: /tmp
+            - name: runtime
+              mountPath: /run/devbox
+            - name: dshm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              memory: 8Gi
+      volumes:
+        - name: authorized-keys
+          secret:
+            secretName: devbox-ssh
+            defaultMode: 0440
+        - name: host-keys
+          secret:
+            secretName: devbox-host-keys
+            # Group-readable through fsGroup; the entrypoint copies the keys to
+            # mode 600 copies, which is what sshd insists on.
+            defaultMode: 0440
+            optional: true
+        - name: tmp
+          emptyDir: {}
+        - name: runtime
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: home
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devbox
+  labels:
+    app.kubernetes.io/name: devbox
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: devbox
+  ports:
+    - name: ssh
+      port: 2222
+      targetPort: ssh
