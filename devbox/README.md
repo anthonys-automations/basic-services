@@ -94,7 +94,9 @@ To manage the identity yourself, mount a directory containing
   the home directory instead.
 - **Browsers:** `chromium --headless …`, `firefox --headless …`, or Playwright
   from Node. Chromium falls back to `--no-sandbox` where user namespaces are
-  unavailable, leaving the container as the isolation boundary.
+  unavailable, leaving the container as the isolation boundary. The interactive
+  Firefox tuning used by sandbox-browser is not applied here, so Playwright
+  keeps its automation defaults.
 
 ## Kubernetes
 
@@ -107,6 +109,8 @@ kubectl apply -f k8s/devbox.yaml
 kubectl port-forward svc/devbox 2222:2222
 ```
 
+- Requests 900m CPU for concurrent browser and CLI workloads, with no CPU limit
+  so they can use spare node capacity.
 - `/home/user` is a 20 GiB `ReadWriteOnce` claim from the volume template.
 - With `readOnlyRootFilesystem: true`, `/tmp`, `/run/devbox` and `/dev/shm` are
   `emptyDir` volumes. Everything else that is written goes to the home claim.

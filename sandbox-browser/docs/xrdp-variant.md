@@ -33,8 +33,8 @@ Nothing in the container runs as root, which costs the daemons the privileges th
 
 The container exits once every session has ended so a restart policy can return it to the pool.
 
-- `-MaxDisconnectionTime=10` ends Xvnc ten seconds after the RDP client goes away, which ends the window manager and the session. sesman's own `KillDisconnected` is not used: sesman only forwards it to the X server as `XRDP_SESMAN_KILL_DISCONNECTED`, and acting on it is xorgxrdp's job, so it does nothing for an Xvnc session.
-- The entrypoint polls the session markers and exits after the set becomes empty, having been non-empty.
+- `-MaxDisconnectionTime=10` asks Xvnc to stop ten seconds after the RDP client goes away. `KillDisconnected=true` and `DisconnectedTimeLimit=10` are also configured for backends that honor them, but sesman only forwards the setting as `XRDP_SESMAN_KILL_DISCONNECTED`, and acting on it is xorgxrdp's job.
+- Since Xvnc cannot signal its own exit in some container runtimes, the entrypoint checks for established connections on port 3389 and reaps an `xrdp-sesman` marker after 30 seconds without a client. It exits after all session markers are gone, having been non-empty.
 - Markers are named after the owning `sshd` or `xrdp-sesman` process, so a session that never reaches PAM close is reaped by liveness check instead of pinning the container.
 - Both listeners are monitored for the whole container life; a daemon crash exits PID 1 rather than leaving a half-working container.
 

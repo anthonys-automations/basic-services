@@ -70,7 +70,7 @@ The password is hashed into a runtime file that PAM checks; nothing is written t
 
 Every session ends in a container restart, and Kubernetes rate limits restarts, so a replica that has just recycled can sit in `CrashLoopBackOff` for a while before it is ready again. Run more replicas than concurrent tenants so a recycling one is never the only candidate. A startup probe covers the few seconds the container spends generating host keys and the TLS certificate, which is otherwise long enough for the first liveness check to kill it.
 
-The Pod runs with `readOnlyRootFilesystem: true`, which needs an `emptyDir` for every path written after startup: `/home/user` for the account and its desktop state, `/tmp` for the X and ICE sockets, `/run/sandbox` for the runtime state below, `/run/xrdp` for xrdp's own sockets and PID files, and `/dev/shm` for the browsers. Those volumes hide what the image put at the same paths, so the entrypoint recreates the socket directories and copies `/etc/skel` back into the home directory. Dropping a volume is not an option: the daemon that needs it fails at startup instead of falling back.
+The Pod requests 900m CPU for browser work under node contention and has no CPU limit, so it can still use available burst capacity. It runs with `readOnlyRootFilesystem: true`, which needs an `emptyDir` for every path written after startup: `/home/user` for the account and its desktop state, `/tmp` for the X and ICE sockets, `/run/sandbox` for the runtime state below, `/run/xrdp` for xrdp's own sockets and PID files, and `/dev/shm` for the browsers. Those volumes hide what the image put at the same paths, so the entrypoint recreates the socket directories and copies `/etc/skel` back into the home directory. Dropping a volume is not an option: the daemon that needs it fails at startup instead of falling back.
 
 ```bash
 kubectl apply -f k8s/sandbox-browser.yaml
@@ -78,7 +78,7 @@ kubectl apply -f k8s/sandbox-browser.yaml
 
 ## Session lifecycle
 
-The container is claimed by the first client, over either protocol. PAM records a session marker on open and removes it on close, and the first marker drops readiness so a load balancer stops sending new clients. Both listeners keep running, so a client that raced in — an agent opening SSH alongside its own desktop, for example — is served rather than rejected. The container exits once every session has ended, and `restart: unless-stopped` returns it to the pool. A desktop is not parked for reconnection: Xvnc terminates ten seconds after the RDP client disconnects, which ends that session.
+The container is claimed by the first client, over either protocol. PAM records a session marker on open and removes it on close, and the first marker drops readiness so a load balancer stops sending new clients. Both listeners keep running, so a client that raced in — an agent opening SSH alongside its own desktop, for example — is served rather than rejected. The container exits once every session has ended, and `restart: unless-stopped` returns it to the pool. A desktop is not parked for reconnection: Xvnc is configured to stop ten seconds after disconnect, and the entrypoint reaps a stale RDP marker after 30 seconds without an established client connection.
 
 ### Readiness and liveness
 
@@ -109,7 +109,7 @@ In Kubernetes, only mounted volumes carry state between restarted containers.
 
 - Ubuntu's `firefox` apt package is a snap stub that cannot run in a container, so both launchers point at Playwright's bundled builds.
 - Chromium's internal sandbox requires user namespaces. Where the container forbids them, the `chromium` launcher falls back to `--no-sandbox` and the container boundary remains the isolation layer. Firefox handles this case itself.
-- Playwright's Firefox build carries an autoconfig file that reapplies its automation preferences on every start, on the user branch, so a home page, PDF viewer or spell check setting chosen in the desktop session was silently discarded at the next launch. The image wraps that file in a check for `SANDBOX_BROWSER_INTERACTIVE`, which only the `firefox` launcher sets: the desktop gets a stock browser that keeps its settings, and Playwright, which runs the binary directly, is unaffected.
+- Playwright's Firefox build carries an autoconfig file that reapplies its automation preferences on every start, on the user branch, so a home page, PDF viewer or spell check setting chosen in the desktop session was silently discarded at the next launch. The image wraps that file in a check for `SANDBOX_BROWSER_INTERACTIVE`, which only the `firefox` launcher sets: the desktop gets performance-oriented defaults, honors `http_proxy`/`HTTP_PROXY` and `https_proxy`/`HTTPS_PROXY`, and uses an image-baked uBlock Origin installation, while Playwright, which runs the binary directly, keeps its automation preferences unchanged.
 
 ## Version policy
 

@@ -34,6 +34,7 @@ RUN apt-get update \
     curl \
     dbus-x11 \
     git \
+    iproute2 \
     jq \
     libpam-pwdfile \
     openssh-server \
@@ -75,6 +76,29 @@ RUN mkdir -p /opt/sandbox-browser \
   && ln -s "$(node -e 'process.stdout.write(require("playwright").firefox.executablePath())')" /opt/sandbox-browser/firefox \
   && ln -s "$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')" /opt/sandbox-browser/chromium
 
+# Install uBlock into the image so a fresh desktop profile does not download it
+# through the runtime proxy on every pod start.
+RUN mkdir -p /etc/sandbox-browser \
+  && curl -fsSL --retry 3 -o /opt/sandbox-browser/ublock-origin.xpi \
+    https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi \
+  && python3 -m zipfile -t /opt/sandbox-browser/ublock-origin.xpi
+COPY <<'EOF' /etc/sandbox-browser/firefox-policies.json
+{
+  "policies": {
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "OverrideFirstRunPage": "",
+    "DontCheckDefaultBrowser": true,
+    "ExtensionSettings": {
+      "uBlock0@raymondhill.net": {
+        "installation_mode": "force_installed",
+        "install_url": "file:///opt/sandbox-browser/ublock-origin.xpi"
+      }
+    }
+  }
+}
+EOF
+
 # Playwright's Firefox applies playwright.cfg on every start, and autoconfig
 # writes to the user branch, not the default one: a home page, PDF viewer or
 # spell check setting made in the desktop session is silently overwritten the
@@ -82,9 +106,56 @@ RUN mkdir -p /opt/sandbox-browser \
 # is wrapped in the variable only the interactive launcher exports. Firefox
 # requires the first line to be a comment and ignores it, hence the split.
 RUN cfg="$(dirname "$(readlink -f /opt/sandbox-browser/firefox)")/playwright.cfg" \
-  && { head -n 1 "$cfg"; echo 'if (!getenv("SANDBOX_BROWSER_INTERACTIVE")) {'; tail -n +2 "$cfg"; echo '}'; } > "$cfg.guarded" \
+  && { \
+    head -n 1 "$cfg"; \
+    echo 'if (!getenv("SANDBOX_BROWSER_INTERACTIVE")) {'; \
+    tail -n +2 "$cfg"; \
+    printf '%s\n' \
+      '} else {' \
+      '  pref("media.autoplay.default", 5);' \
+      '  pref("media.autoplay.blocking_policy", 2);' \
+      '  pref("media.av1.enabled", false);' \
+      '  pref("layout.frame_rate", 30);' \
+      '  pref("general.smoothScroll", false);' \
+      '  pref("toolkit.cosmeticAnimations.enabled", false);' \
+      '  pref("ui.prefersReducedMotion", 1);' \
+      '  pref("image.animation_mode", "once");' \
+      '  pref("dom.ipc.processCount", 4);' \
+      '  pref("dom.ipc.processCount.webIsolated", 1);' \
+      '  pref("browser.tabs.unloadOnLowMemory", true);' \
+      '  pref("browser.contentblocking.category", "strict");' \
+      '  pref("privacy.trackingprotection.enabled", true);' \
+      '  pref("privacy.trackingprotection.socialtracking.enabled", true);' \
+      '  pref("browser.sessionstore.interval", 60000);' \
+      '  pref("browser.newtabpage.activity-stream.feeds.topsites", false);' \
+      '  pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);' \
+      '  pref("extensions.pocket.enabled", false);' \
+      '  pref("network.trr.mode", 5);' \
+      '  function sandboxBrowserProxy(value) {' \
+      '    if (!value) return null;' \
+      '    var match = value.match(/^(?:(https?):\\/\\/)?(?:[^@\\/]+@)?(\\[[0-9a-f:.]+\\]|[^\\s:\\/?#@]+)(?::([0-9]+))?\\/?$/i);' \
+      '    if (!match) return null;' \
+      '    return { host: match[2].replace(/^\\[|\\]$/g, ""), port: match[3] ? parseInt(match[3], 10) : (match[1] && match[1].toLowerCase() == "https" ? 443 : 80) };' \
+      '  }' \
+      '  var httpProxy = sandboxBrowserProxy(getenv("http_proxy") || getenv("HTTP_PROXY"));' \
+      '  var httpsProxy = sandboxBrowserProxy(getenv("https_proxy") || getenv("HTTPS_PROXY")) || httpProxy;' \
+      '  if (httpProxy || httpsProxy) {' \
+      '    pref("network.proxy.type", 1);' \
+      '    if (httpProxy) {' \
+      '      pref("network.proxy.http", httpProxy.host);' \
+      '      pref("network.proxy.http_port", httpProxy.port);' \
+      '    }' \
+      '    if (httpsProxy) {' \
+      '      pref("network.proxy.ssl", httpsProxy.host);' \
+      '      pref("network.proxy.ssl_port", httpsProxy.port);' \
+      '    }' \
+      '  }' \
+      '  pref("browser.policies.alternatePath", "/etc/sandbox-browser/firefox-policies.json");' \
+      '}'; \
+  } > "$cfg.guarded" \
   && mv "$cfg.guarded" "$cfg" \
-  && grep -q 'SANDBOX_BROWSER_INTERACTIVE' "$cfg"
+  && grep -q 'SANDBOX_BROWSER_INTERACTIVE' "$cfg" \
+  && grep -q 'browser.policies.alternatePath' "$cfg"
 
 COPY --chmod=755 scripts/firefox scripts/chromium /usr/local/bin/
 
@@ -111,6 +182,8 @@ XDG_PUBLICSHARE_DIR="$HOME/Public"
 EOF
 
 RUN sed -i 's/^autorun=.*/autorun=Xvnc/' /etc/xrdp/xrdp.ini \
+  && sed -i 's/^max_bpp=.*/max_bpp=16/' /etc/xrdp/xrdp.ini \
+  && grep -q '^max_bpp=16' /etc/xrdp/xrdp.ini \
   && grep -q '^autorun=Xvnc' /etc/xrdp/xrdp.ini \
   # autorun only covers clients that send credentials; everyone else gets the
   # login window, whose session list is these sections in file order. Xorg is
@@ -123,9 +196,11 @@ RUN sed -i 's/^autorun=.*/autorun=Xvnc/' /etc/xrdp/xrdp.ini \
   && sed -i 's|^certificate=.*|certificate=/run/sandbox/cert.pem|; s|^key_file=.*|key_file=/run/sandbox/key.pem|' /etc/xrdp/xrdp.ini \
   && sed -i 's|^LogFile=.*|LogFile=/run/sandbox/xrdp.log|; s/^EnableSyslog=.*/EnableSyslog=false/' /etc/xrdp/xrdp.ini \
   && sed -i 's|^LogFile=.*|LogFile=/run/sandbox/xrdp-sesman.log|; s/^EnableSyslog=.*/EnableSyslog=false/' /etc/xrdp/sesman.ini \
-  # sesman's KillDisconnected only reaches the X server as an environment
-  # variable that xorgxrdp acts on, so an Xvnc session ignores it. Xvnc ends
-  # itself instead, which ends the window manager, the session and the container.
+  # KillDisconnected is forwarded only for xorgxrdp, so the entrypoint also
+  # watches for a disconnected RDP client before reaping an Xvnc session marker.
+  && sed -i 's/^KillDisconnected=.*/KillDisconnected=true/; s/^DisconnectedTimeLimit=.*/DisconnectedTimeLimit=10/' /etc/xrdp/sesman.ini \
+  && grep -q '^KillDisconnected=true' /etc/xrdp/sesman.ini \
+  && grep -q '^DisconnectedTimeLimit=10' /etc/xrdp/sesman.ini \
   # The first param is the executable, hence the insert rather than an append.
   && sed -i 's/^param=Xvnc$/param=Xvnc\nparam=-MaxDisconnectionTime=10/' /etc/xrdp/sesman.ini \
   && grep -q '^param=-MaxDisconnectionTime=10' /etc/xrdp/sesman.ini \

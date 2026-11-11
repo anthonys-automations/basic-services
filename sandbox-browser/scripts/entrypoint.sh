@@ -12,6 +12,8 @@ xrdp_passwd="$runtime_dir/xrdp.passwd"
 mounted_keys=/home/user/.ssh/authorized_keys
 authorized_keys="$runtime_dir/authorized_keys"
 daemon_pids=()
+rdp_disconnected_since=""
+rdp_disconnect_grace_seconds=30
 
 cleanup() {
   # The directory itself is created by the image; an unprivileged process
@@ -115,6 +117,45 @@ reap_dead_sessions() {
   done
 }
 
+rdp_session_markers_present() {
+  local marker comm
+  for marker in "$sessions_dir"/*; do
+    [[ -e "$marker" ]] || continue
+    IFS= read -r comm < "/proc/${marker##*/}/comm" || continue
+    [[ "$comm" == xrdp-sesman ]] && return 0
+  done
+  return 1
+}
+
+reap_disconnected_rdp_session() {
+  local connections now marker comm
+  if ! rdp_session_markers_present; then
+    rdp_disconnected_since=""
+    return
+  fi
+
+  connections=$(ss -Htn state established sport = :3389)
+  if [[ -n "$connections" ]]; then
+    rdp_disconnected_since=""
+    return
+  fi
+
+  now=$(date +%s)
+  if [[ -z "$rdp_disconnected_since" ]]; then
+    rdp_disconnected_since=$now
+    return
+  fi
+  (( now - rdp_disconnected_since >= rdp_disconnect_grace_seconds )) || return
+
+  for marker in "$sessions_dir"/*; do
+    [[ -e "$marker" ]] || continue
+    IFS= read -r comm < "/proc/${marker##*/}/comm" || continue
+    [[ "$comm" == xrdp-sesman ]] && rm -f "$marker"
+  done
+  echo "No RDP client connected for ${rdp_disconnect_grace_seconds}s; reaped disconnected session."
+  rdp_disconnected_since=""
+}
+
 sessions_active() {
   compgen -G "$sessions_dir/*" >/dev/null
 }
@@ -132,6 +173,7 @@ touch "$ready_marker"
 claimed=""
 while daemons_alive; do
   reap_dead_sessions
+  reap_disconnected_rdp_session
   if sessions_active; then
     claimed=1
   elif [[ -n "$claimed" ]]; then
