@@ -96,7 +96,13 @@ To manage the identity yourself, mount a directory containing
   from Node. Chromium falls back to `--no-sandbox` where user namespaces are
   unavailable, leaving the container as the isolation boundary. The interactive
   Firefox tuning used by sandbox-browser is not applied here, so Playwright
-  keeps its automation defaults.
+  keeps its automation defaults apart from the privacy settings below.
+- **Firefox privacy:** direct and Playwright launches lock telemetry uploads,
+  studies and related recommendations off. `MOZ_CRASHREPORTER_DISABLE=1`
+  disables crash reporting and crash dumps for normal container and SSH
+  launches. These settings do not block visits to Mozilla sites or other
+  Mozilla services such as extension updates, remote settings and Firefox Sync;
+  use network controls if those connections must also be blocked.
 
 ## Kubernetes
 

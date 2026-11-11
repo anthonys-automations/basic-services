@@ -43,6 +43,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
   LANG=C.UTF-8 \
   PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
   NODE_PATH=/opt/playwright/node_modules \
+  MOZ_CRASHREPORTER_DISABLE=1 \
   DISABLE_AUTOUPDATER=1
 
 RUN apt-get update \
@@ -92,6 +93,7 @@ RUN apt-get update \
     LANG=C.UTF-8 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     NODE_PATH=/opt/playwright/node_modules \
+    MOZ_CRASHREPORTER_DISABLE=1 \
     DISABLE_AUTOUPDATER=1 \
     >> /etc/environment
 
@@ -103,6 +105,15 @@ RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --prefix
   && mkdir -p /opt/devbox \
   && ln -s "$(node -e 'process.stdout.write(require("playwright").firefox.executablePath())')" /opt/devbox/firefox \
   && ln -s "$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')" /opt/devbox/chromium
+
+# These settings also apply when Playwright launches its Firefox binary directly.
+COPY config/firefox/privacy.cfg /tmp/firefox-privacy.cfg
+RUN cfg="$(dirname "$(readlink -f /opt/devbox/firefox)")/playwright.cfg" \
+  && printf '\n' >> "$cfg" \
+  && cat /tmp/firefox-privacy.cfg >> "$cfg" \
+  && rm /tmp/firefox-privacy.cfg \
+  && node --check < "$cfg"
+
 COPY --chmod=755 scripts/firefox scripts/chromium /usr/local/bin/
 
 # AWS CLI v2 is not published to PyPI; the official bundle carries its own Python.

@@ -22,7 +22,8 @@ FROM mcr.microsoft.com/playwright:v1.64.1-noble
 
 ENV DEBIAN_FRONTEND=noninteractive \
   PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-  NODE_PATH=/opt/playwright/node_modules
+  NODE_PATH=/opt/playwright/node_modules \
+  MOZ_CRASHREPORTER_DISABLE=1
 
 # Xvnc is used as the xrdp backend because Xorg needs host privileges a container lacks.
 # libpam-pwdfile authenticates RDP against a runtime file, since a non-root
@@ -67,7 +68,7 @@ RUN apt-get update \
   # SSH sessions do not inherit image ENV, so PAM supplies these to agents too.
   # BROWSER covers the tools that consult it; NO_AT_BRIDGE stops every GTK app
   # warning about the accessibility bus this image has no reason to run.
-  && printf 'PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\nNODE_PATH=/opt/playwright/node_modules\nBROWSER=/usr/local/bin/firefox\nNO_AT_BRIDGE=1\n' >> /etc/environment
+  && printf 'PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\nNODE_PATH=/opt/playwright/node_modules\nBROWSER=/usr/local/bin/firefox\nNO_AT_BRIDGE=1\nMOZ_CRASHREPORTER_DISABLE=1\n' >> /etc/environment
 
 # Pin launchers to the image's single installed browser revisions.
 # Asking playwright for the paths avoids hardcoding a per-version directory layout,
@@ -105,6 +106,7 @@ EOF
 # next time the browser starts. Automation still wants those prefs, so the file
 # is wrapped in the variable only the interactive launcher exports. Firefox
 # requires the first line to be a comment and ignores it, hence the split.
+COPY config/firefox/privacy.cfg /tmp/firefox-privacy.cfg
 RUN cfg="$(dirname "$(readlink -f /opt/sandbox-browser/firefox)")/playwright.cfg" \
   && { \
     head -n 1 "$cfg"; \
@@ -133,9 +135,9 @@ RUN cfg="$(dirname "$(readlink -f /opt/sandbox-browser/firefox)")/playwright.cfg
       '  pref("network.trr.mode", 5);' \
       '  function sandboxBrowserProxy(value) {' \
       '    if (!value) return null;' \
-      '    var match = value.match(/^(?:(https?):\\/\\/)?(?:[^@\\/]+@)?(\\[[0-9a-f:.]+\\]|[^\\s:\\/?#@]+)(?::([0-9]+))?\\/?$/i);' \
+      '    var match = value.match(/^(?:(https?):\/\/)?(?:[^@\/]+@)?(\[[0-9a-f:.]+\]|[^\s:\/?#@]+)(?::([0-9]+))?\/?$/i);' \
       '    if (!match) return null;' \
-      '    return { host: match[2].replace(/^\\[|\\]$/g, ""), port: match[3] ? parseInt(match[3], 10) : (match[1] && match[1].toLowerCase() == "https" ? 443 : 80) };' \
+      '    return { host: match[2].replace(/^\[|\]$/g, ""), port: match[3] ? parseInt(match[3], 10) : (match[1] && match[1].toLowerCase() == "https" ? 443 : 80) };' \
       '  }' \
       '  var httpProxy = sandboxBrowserProxy(getenv("http_proxy") || getenv("HTTP_PROXY"));' \
       '  var httpsProxy = sandboxBrowserProxy(getenv("https_proxy") || getenv("HTTPS_PROXY")) || httpProxy;' \
@@ -152,8 +154,11 @@ RUN cfg="$(dirname "$(readlink -f /opt/sandbox-browser/firefox)")/playwright.cfg
       '  }' \
       '  pref("browser.policies.alternatePath", "/etc/sandbox-browser/firefox-policies.json");' \
       '}'; \
+    cat /tmp/firefox-privacy.cfg; \
   } > "$cfg.guarded" \
   && mv "$cfg.guarded" "$cfg" \
+  && rm /tmp/firefox-privacy.cfg \
+  && node --check < "$cfg" \
   && grep -q 'SANDBOX_BROWSER_INTERACTIVE' "$cfg" \
   && grep -q 'browser.policies.alternatePath' "$cfg"
 
