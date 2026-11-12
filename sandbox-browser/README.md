@@ -104,9 +104,18 @@ docker compose up -d --force-recreate
 ```
 
 In Kubernetes, only mounted volumes carry state between restarted containers.
+In particular, `emptyDir` home and workspace contents survive container restarts
+within the same Pod; replace the Pod to clear them. Automatic cleanup is not
+enabled, so do not treat a container restart as a clean tenant boundary.
 
 ## Notes on browsers
 
+- At startup, the entrypoint writes the configured `http_proxy`, `https_proxy`,
+  `no_proxy` and their uppercase equivalents to `/run/sandbox/session.env`.
+  PAM loads this file for RDP and SSH (including non-interactive commands),
+  alongside the static image environment. Restart the container after changing
+  proxy settings. Playwright scripts can read these variables to configure
+  their launch proxy; Playwright does not automatically use them.
 - Ubuntu's `firefox` apt package is a snap stub that cannot run in a container, so both launchers point at Playwright's bundled builds.
 - Chromium's internal sandbox requires user namespaces. Where the container forbids them, the `chromium` launcher falls back to `--no-sandbox` and the container boundary remains the isolation layer. Firefox handles this case itself.
 - Playwright's Firefox build carries an autoconfig file that reapplies its automation preferences on every start, on the user branch, so a home page, PDF viewer or spell check setting chosen in the desktop session was silently discarded at the next launch. The image wraps that file in a check for `SANDBOX_BROWSER_INTERACTIVE`, which only the `firefox` launcher sets: the desktop gets performance-oriented defaults, honors `http_proxy`/`HTTP_PROXY` and `https_proxy`/`HTTPS_PROXY`, and uses an image-baked uBlock Origin installation, while Playwright, which runs the binary directly, keeps its automation preferences except for the privacy settings below.
@@ -119,3 +128,7 @@ The Playwright version is pinned in both the `FROM` tag and the npm package inst
 ## Design
 
 Background on the desktop side is in [docs/xrdp-variant.md](docs/xrdp-variant.md).
+
+Run the entrypoint regression tests from the repository root with
+`python3 sandbox-browser/scripts/test_runtime.py -v`. They cover disconnect grace,
+concurrent SSH sessions and proxy environment serialization for both images.

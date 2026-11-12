@@ -43,7 +43,7 @@ have_mounted_keys() {
 }
 
 prepare_runtime() {
-  local prior_umask
+  local prior_umask name value
   [[ -n "${XRDP_PASSWORD:-}" ]] || have_mounted_keys || {
     echo "Provide an SSH public key at $mounted_keys, XRDP_PASSWORD, or both." >&2
     exit 1
@@ -51,6 +51,18 @@ prepare_runtime() {
 
   rm -rf "${runtime_dir:?}"/*
   mkdir -p "$sessions_dir" "$ssh_dir"
+  # PAM imports only the proxy allowlist into both SSH and RDP sessions.
+  : > "$runtime_dir/session.env"
+  chmod 0644 "$runtime_dir/session.env"
+  for name in http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+    [[ -v "$name" ]] || continue
+    value=${!name}
+    if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+      echo "Invalid $name: proxy environment values must be single-line." >&2
+      exit 1
+    fi
+    printf '%s=%s\n' "$name" "$value" >> "$runtime_dir/session.env"
+  done
   # With a read-only root filesystem these are volumes, so the image's copies are
   # hidden: recreate what xrdp, X and ICE will not create for a non-root process,
   # and put back the skeleton the account was created with.
@@ -145,7 +157,7 @@ reap_disconnected_rdp_session() {
     rdp_disconnected_since=$now
     return
   fi
-  (( now - rdp_disconnected_since >= rdp_disconnect_grace_seconds )) || return
+  (( now - rdp_disconnected_since >= rdp_disconnect_grace_seconds )) || return 0
 
   for marker in "$sessions_dir"/*; do
     [[ -e "$marker" ]] || continue
@@ -154,6 +166,7 @@ reap_disconnected_rdp_session() {
   done
   echo "No RDP client connected for ${rdp_disconnect_grace_seconds}s; reaped disconnected session."
   rdp_disconnected_since=""
+  return 0
 }
 
 sessions_active() {

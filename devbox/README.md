@@ -103,6 +103,11 @@ To manage the identity yourself, mount a directory containing
   launches. These settings do not block visits to Mozilla sites or other
   Mozilla services such as extension updates, remote settings and Firefox Sync;
   use network controls if those connections must also be blocked.
+- **Proxies:** the entrypoint forwards `http_proxy`, `https_proxy`, `no_proxy`
+  and their uppercase equivalents to SSH sessions through PAM, including
+  non-interactive SSH commands. Restart the container after changing these
+  variables. Playwright scripts must still configure their launch proxy
+  explicitly using the forwarded variables.
 
 ## Kubernetes
 
@@ -134,7 +139,8 @@ sandbox-browser:
   the setuid helper `pam_unix` falls back to is neutered by no-new-privs, so the
   distribution stack would deny every login. Authentication itself is decided
   by `sshd`'s public-key check; PAM only runs `pam_env`, which gives SSH
-  sessions the variables in `/etc/environment`.
+  sessions the variables in `/etc/environment` and the proxy allowlist in
+  `/run/devbox/session.env`.
 - The mounted key list is copied into `/run/devbox` at startup, because `sshd`
   rejects a key file owned by neither the account nor root, which is what a bind
   mount or a Secret usually produces. Host keys are copied for the same reason:

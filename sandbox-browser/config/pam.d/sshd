@@ -8,4 +8,5 @@ auth     required  pam_permit.so
 account  required  pam_permit.so
 session  required  pam_exec.so quiet /usr/local/bin/session-hook.sh
 session  required  pam_env.so
+session  required  pam_env.so readenv=1 envfile=/run/sandbox/session.env user_readenv=0
 session  required  pam_permit.so

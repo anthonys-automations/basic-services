@@ -8,4 +8,5 @@ auth     required  pam_permit.so
 account  required  pam_permit.so
 # SSH sessions do not inherit image ENV; /etc/environment carries it instead.
 session  required  pam_env.so
+session  required  pam_env.so readenv=1 envfile=/run/devbox/session.env user_readenv=0
 session  required  pam_permit.so

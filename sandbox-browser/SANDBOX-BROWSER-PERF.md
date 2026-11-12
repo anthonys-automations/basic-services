@@ -163,9 +163,9 @@ Disconnecting RDP did not end the session, so the pod stayed claimed indefinitel
 - Consequences inside the image: Xvnc self-exit, sesman's SIGTERM to Xvnc/chansrv, and
   `entrypoint.sh` `cleanup()`'s `kill "$pid"` all fail silently.
   PID 1 exiting is still clean, because the kernel tears down the PID namespace.
-- k8s-side mitigation (this repo): the liveness probe fails when every session marker belongs
-  to `xrdp-sesman` and no TCP connection is ESTABLISHED on port 3389. The kubelet then restarts
-  the container after about 30-45s.
+- Fixed in image `2026.11.11.2`: the entrypoint reaps `xrdp-sesman` markers after 30s with no
+  ESTABLISHED connection on :3389. The temporary liveness-probe workaround in this repo was removed.
+  The node-level signal denial is still present (re-verified on 2026-11-11 with the new image).
 - Image-side fix (preferred, and it must not depend on signals): in the `entrypoint.sh` main loop,
   treat an `xrdp-sesman` marker as ended once nothing has been connected on :3389 for N seconds
   (keep a timestamp), then `exit 0`. Also set `KillDisconnected=true` / `DisconnectedTimeLimit`
@@ -190,10 +190,68 @@ Disconnecting RDP did not end the session, so the pod stayed claimed indefinitel
 5. Cold page load timing from the pod: `curl -s -o /dev/null -w '%{time_appconnect} %{time_total}\n' https://example.com`.
    Expect well under the 0.4–0.9 s seen while starved.
 
-## 6. Already done on the k8s side (this repo, not the image)
+## 6. Status after image 2026.11.11.2 (verified 2026-11-11, live RDP session)
+
+- 4.1 interactive prefs, 4.2 uBlock policy (bundled .xpi), 4.3 xfwm4 compositing off and
+  `max_bpp=16`, 4.5 signal-free reaper: all present. Interactive mode reports
+  `prefers-reduced-motion: reduce` and autoplay `disallowed`. Automation/plain mode reports
+  `false` / `allowed-muted`, the Playwright profile has no uBlock, and the §3 probe passes (Firefox 157).
+- Load while browsing: load avg 10.8 → ~1.9, CPU PSI avg60 95% → 22-28%, RDD process gone,
+  13 → 8 content processes, HTTPS appconnect 0.4-0.9s → 0.31-0.44s.
+- Remaining cost: uBlock compiles its filter lists on every fresh profile (`$HOME` is an
+  emptyDir). The WebExtensions process hit ~57% CPU / 650 MB at session start, then settled to ~10%.
+  Optional: trim the lists or disable list auto-update via uBlock `adminSettings` in the policy.
+
+### 6.1 Still to fix in the image (found in 2026.11.11.2, verified live)
+
+**A. Reaper exits 1 two seconds after a disconnect (bug).** In `reap_disconnected_rdp_session`:
+```bash
+(( now - rdp_disconnected_since >= rdp_disconnect_grace_seconds )) || return
+```
+A bare `return` returns the failed `(( ))` status, which is 1. The main loop calls the function as a
+plain command under `set -euo pipefail`, so on the second loop iteration after the disconnect the
+entrypoint aborts. Observed: VNC disconnect at 00:48:20, container `Error` exit 1 at 00:48:22,
+no log line. The 30s reconnect grace never applies, and every disconnect counts toward
+CrashLoopBackOff. Fix: `|| return 0`. Also end the function with `return 0` after the final
+`for` loop: its last command is `[[ … ]] && rm`, which can leave status 1.
+Test it with a real disconnect, or with a fake marker named after the `xrdp-sesman` PID while
+**no** client is on :3389. Expect `No RDP client connected for 30s…`, then
+`All sessions ended; exiting.` and exit 0.
+
+**B. Desktop and SSH sessions do not get `http_proxy` (why "honor the env proxy" did not work).**
+The cfg `else` branch is correct. Verified: desktop-mode Firefox on a clean profile loads
+https://example.com with `http_proxy` set and hangs without it, because direct egress is
+blocked by NetworkPolicy. But the variable never reaches session processes. xrdp-sesman builds
+the session environment from scratch: `[SessionVariables]` holds only `PULSE_SCRIPT`, and
+`startwm.sh` only sources `/etc/profile`. sshd also builds a fresh environment. Both PAM stacks
+run `pam_env.so`, but only with the static `/etc/environment`, which has no proxy. The same gap
+means Playwright scripts run over a real SSH login see no `process.env.https_proxy`. The earlier
+§3 probe ran via `kubectl exec`, which has the container env.
+Fix (one mechanism for RDP, interactive and non-interactive SSH):
+1. In `entrypoint.sh` `prepare_runtime`, after the runtime dir is recreated, always write
+   `/run/sandbox/session.env` (mode 0644, created even when empty). Write `KEY=value` lines for
+   whichever of `http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY` are set.
+   Use plain `KEY=value`, the `/etc/environment` syntax, with no `export`.
+2. In both `/etc/pam.d/xrdp-sesman` and `/etc/pam.d/sshd`, add after the existing `pam_env.so`
+   line: `session required pam_env.so readenv=1 envfile=/run/sandbox/session.env user_readenv=0`.
+   Keep the existing line, because `/etc/environment` carries `PATH`, `PLAYWRIGHT_BROWSERS_PATH`
+   and `NODE_PATH`.
+3. Verify from a real RDP session (`about:config` → `network.proxy.http` set without any manual
+   change) and with `ssh … 'node -e "console.log(process.env.https_proxy)"'`.
+
+**C. `$HOME` is not clean per session.** `/home/user` (and `/home/user/workspace`) are emptyDirs.
+emptyDir lives as long as the **pod**, not the container, so after the entrypoint exits and
+the container restarts, the next session inherits the previous browser profile: history,
+cookies, logins, and here the manual proxy prefs from the last session. `prepare_runtime` only
+copies `/etc/skel` in with `--update=none`. Fix: at the start of `prepare_runtime`, empty
+`/home/user` except the `.ssh/authorized_keys` subPath mount, which cannot be removed.
+Something like `find /home/user -mindepth 1 -maxdepth 1 ! -name .ssh ! -name workspace -exec rm -rf {} +`
+plus emptying `workspace/`, then re-copy skel. (Alternative on the k8s side: none that is clean;
+kubelet does not reset emptyDir on container restart.)
+
+## 7. Already done on the k8s side (this repo, not the image)
 
 - tinyproxy: `dnsConfig` `ndots:1` (cold external lookups no longer walk 4 search domains).
-- interwebz: liveness also fails on an RDP session with no RDP client (see 4.5);
-  readiness probe 2s→5s, liveness 5s→15s, CPU request 500m→900m,
+- interwebz: readiness probe 2s→5s, liveness 5s→15s, CPU request 500m→900m,
   strategy `Recreate`. On the only node with enough RAM (`k3s-pw1`), the old and
   new pods would not both fit at that request.

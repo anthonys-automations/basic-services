@@ -39,6 +39,19 @@ trap 'exit 0' TERM INT
 # Docker keeps the writable layer across restarts, so clear what a previous run left.
 rm -rf "${runtime_dir:?}"/*
 
+# PAM imports only the proxy allowlist into SSH sessions.
+: > "$runtime_dir/session.env"
+chmod 0644 "$runtime_dir/session.env"
+for name in http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+  [[ -v "$name" ]] || continue
+  value=${!name}
+  if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+    echo "Invalid $name: proxy environment values must be single-line." >&2
+    exit 1
+  fi
+  printf '%s=%s\n' "$name" "$value" >> "$runtime_dir/session.env"
+done
+
 # A fresh home volume hides what the image put there; put back the skeleton
 # without overwriting anything the user has changed since.
 cp -r --update=none /etc/skel/. "$home_dir/"
