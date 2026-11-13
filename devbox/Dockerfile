@@ -1,16 +1,16 @@
-# syntax=docker/dockerfile:1.28
+# syntax=docker/dockerfile:1.29
 
 # The Python CLIs are built in their own stage so the compiler needed by the odd
 # source-only dependency never reaches the final image. Each tool gets its own
 # virtualenv: azure-cli, oci-cli and ansible pin overlapping libraries
 # differently and would otherwise fight over them. The stage shares the final
 # image's base, so the interpreter each venv links to is the same one.
-FROM mcr.microsoft.com/playwright:v1.64.1-noble AS python-tools
+FROM mcr.microsoft.com/playwright:v1.65.0-noble AS python-tools
 
 # renovate: datasource=pypi depName=azure-cli
 ARG AZURE_CLI_VERSION=2.92.0
 # renovate: datasource=pypi depName=oci-cli
-ARG OCI_CLI_VERSION=3.96.0
+ARG OCI_CLI_VERSION=3.96.2
 # renovate: datasource=pypi depName=ansible
 ARG ANSIBLE_VERSION=14.6.0
 
@@ -26,14 +26,14 @@ RUN python3 -m venv /opt/venvs/ansible \
 
 # Playwright's maintained image supplies compatible Chromium, Firefox, Node.js,
 # and the OS libraries required to automate both browsers.
-FROM mcr.microsoft.com/playwright:v1.64.1-noble
+FROM mcr.microsoft.com/playwright:v1.65.0-noble
 
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_CLI_VERSION=2.39.4
+ARG AWS_CLI_VERSION=2.40.2
 # renovate: datasource=github-releases depName=hashicorp/terraform extractVersion=^v(?<version>.+)$
-ARG TERRAFORM_VERSION=1.17.1
+ARG TERRAFORM_VERSION=1.17.2
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.318
+ARG CLAUDE_CODE_VERSION=2.1.323
 
 # Image ENV reaches docker exec and kubectl exec; SSH sessions get the same
 # values from /etc/environment below. DISABLE_AUTOUPDATER because Claude Code is
@@ -100,7 +100,7 @@ RUN apt-get update \
 # Playwright for headless automation, with its browsers resolved from the base
 # image. Playwright resolves browsers by revision, so a pin that disagrees with
 # the base image builds cleanly and only fails at runtime - hence the check.
-RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --prefix /opt/playwright playwright@1.64.1 \
+RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --prefix /opt/playwright playwright@1.65.0 \
   && node -e 'const p=require("playwright"),f=require("fs");for(const b of [p.chromium,p.firefox]){const e=b.executablePath();if(!f.existsSync(e))throw new Error("npm playwright does not match the base image browsers: "+e)}' \
   && mkdir -p /opt/devbox \
   && ln -s "$(node -e 'process.stdout.write(require("playwright").firefox.executablePath())')" /opt/devbox/firefox \
