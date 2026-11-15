@@ -16,8 +16,8 @@ int initgroups(const char *user, unsigned int group) { return 0; }
 EOF
 RUN gcc -O2 -shared -fPIC -o /tmp/noinitgroups.so /tmp/noinitgroups.c
 
-# Playwright's maintained image supplies compatible Chromium, Firefox, Node.js,
-# and the OS libraries required to automate both browsers.
+# Playwright's maintained image supplies a compatible Chromium, Node.js, and the
+# OS libraries required to automate it.
 FROM mcr.microsoft.com/playwright:v1.64.1-noble
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -34,6 +34,7 @@ RUN apt-get update \
     ca-certificates \
     curl \
     dbus-x11 \
+    file \
     git \
     iproute2 \
     jq \
@@ -46,6 +47,7 @@ RUN apt-get update \
     xfce4 \
     xfce4-terminal \
     xrdp \
+    xz-utils \
   && rm -rf /var/lib/apt/lists/* \
   # 1000 and 1001 are already taken by the base image's ubuntu and pwuser accounts.
   && groupadd --gid 10000 user \
@@ -64,32 +66,56 @@ RUN apt-get update \
   && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
   && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --prefix /opt/playwright playwright@1.64.1 \
   # Playwright resolves browsers by revision, so a pin that disagrees with the base image builds cleanly and only fails at runtime.
-  && node -e 'const p=require("playwright"),f=require("fs");for(const b of [p.chromium,p.firefox]){const e=b.executablePath();if(!f.existsSync(e))throw new Error("npm playwright does not match the base image browsers: "+e)}' \
+  && node -e 'const e=require("playwright").chromium.executablePath();if(!require("fs").existsSync(e))throw new Error("npm playwright does not match the base image browsers: "+e)' \
+  # Playwright Chromium is the only automation browser. Its Firefox reports
+  # navigator.webdriver and no WebGL even when started by hand, which captchas reject.
+  && rm -rf /ms-playwright/firefox-* /ms-playwright/webkit-* \
   # SSH sessions do not inherit image ENV, so PAM supplies these to agents too.
   # BROWSER covers the tools that consult it; NO_AT_BRIDGE stops every GTK app
   # warning about the accessibility bus this image has no reason to run.
-  && printf 'PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\nNODE_PATH=/opt/playwright/node_modules\nBROWSER=/usr/local/bin/firefox\nNO_AT_BRIDGE=1\nMOZ_CRASHREPORTER_DISABLE=1\n' >> /etc/environment
+  && printf 'PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\nNODE_PATH=/opt/playwright/node_modules\nBROWSER=/usr/bin/firefox\nNO_AT_BRIDGE=1\nMOZ_CRASHREPORTER_DISABLE=1\n' >> /etc/environment
 
-# Pin launchers to the image's single installed browser revisions.
-# Asking playwright for the paths avoids hardcoding a per-version directory layout,
-# which broke when the base image moved the Chromium binary out of chrome-linux/.
-RUN mkdir -p /opt/sandbox-browser \
-  && ln -s "$(node -e 'process.stdout.write(require("playwright").firefox.executablePath())')" /opt/sandbox-browser/firefox \
-  && ln -s "$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')" /opt/sandbox-browser/chromium
+# Stock browsers for the desktop, from the vendors' own repositories: Ubuntu's
+# firefox package is a snap stub, and the pin keeps its higher epoch from
+# winning. Chrome's postinst replaces the bootstrap source with its own
+# deb822 file and keyring, so the bootstrap pair is dropped afterwards.
+RUN install -d -m 0755 /etc/apt/keyrings \
+  && curl -fsSL --retry 3 -o /etc/apt/keyrings/packages.mozilla.org.asc https://packages.mozilla.org/apt/repo-signing-key.gpg \
+  && gpg --show-keys --with-colons /etc/apt/keyrings/packages.mozilla.org.asc | grep -qx 'fpr:::::::::35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3:' \
+  && curl -fsSL --retry 3 https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google-chrome-bootstrap.gpg \
+  && gpg --show-keys --with-colons /etc/apt/keyrings/google-chrome-bootstrap.gpg | grep -qx 'fpr:::::::::EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796:' \
+  && echo 'deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main' > /etc/apt/sources.list.d/mozilla.list \
+  && printf 'Package: *\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' > /etc/apt/preferences.d/mozilla \
+  && echo 'deb [signed-by=/etc/apt/keyrings/google-chrome-bootstrap.gpg] https://dl.google.com/linux/chrome/deb/ stable main' > /etc/apt/sources.list.d/google-chrome.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends firefox google-chrome-stable \
+  && rm -rf /var/lib/apt/lists/* \
+  && rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/keyrings/google-chrome-bootstrap.gpg \
+  && test -x /usr/lib/firefox/firefox \
+  && test -x /opt/google/chrome/google-chrome
 
 # Install uBlock into the image so a fresh desktop profile does not download it
 # through the runtime proxy on every pod start.
-RUN mkdir -p /etc/sandbox-browser \
+RUN mkdir -p /opt/sandbox-browser \
   && curl -fsSL --retry 3 -o /opt/sandbox-browser/ublock-origin.xpi \
     https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi \
   && python3 -m zipfile -t /opt/sandbox-browser/ublock-origin.xpi
-COPY <<'EOF' /etc/sandbox-browser/firefox-policies.json
+COPY <<'EOF' /etc/firefox/policies/policies.json
 {
   "policies": {
     "DisableTelemetry": true,
     "DisableFirefoxStudies": true,
-    "OverrideFirstRunPage": "",
+    "DisableAppUpdate": true,
     "DontCheckDefaultBrowser": true,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+    "SkipTermsOfUse": true,
+    "UserMessaging": {
+      "SkipOnboarding": true,
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "MoreFromMozilla": false
+    },
     "ExtensionSettings": {
       "uBlock0@raymondhill.net": {
         "installation_mode": "force_installed",
@@ -100,73 +126,77 @@ COPY <<'EOF' /etc/sandbox-browser/firefox-policies.json
 }
 EOF
 
-# Playwright's Firefox applies playwright.cfg on every start, and autoconfig
-# writes to the user branch, not the default one: a home page, PDF viewer or
-# spell check setting made in the desktop session is silently overwritten the
-# next time the browser starts. Automation still wants those prefs, so the file
-# is wrapped in the variable only the interactive launcher exports. Firefox
-# requires the first line to be a comment and ignores it, hence the split.
-COPY config/firefox/privacy.cfg /tmp/firefox-privacy.cfg
-RUN cfg="$(dirname "$(readlink -f /opt/sandbox-browser/firefox)")/playwright.cfg" \
-  && { \
-    head -n 1 "$cfg"; \
-    echo 'if (!getenv("SANDBOX_BROWSER_INTERACTIVE")) {'; \
-    tail -n +2 "$cfg"; \
-    printf '%s\n' \
-      '} else {' \
-      '  pref("media.autoplay.default", 5);' \
-      '  pref("media.autoplay.blocking_policy", 2);' \
-      '  pref("media.av1.enabled", false);' \
-      '  pref("layout.frame_rate", 30);' \
-      '  pref("general.smoothScroll", false);' \
-      '  pref("toolkit.cosmeticAnimations.enabled", false);' \
-      '  pref("ui.prefersReducedMotion", 1);' \
-      '  pref("image.animation_mode", "once");' \
-      '  pref("dom.ipc.processCount", 4);' \
-      '  pref("dom.ipc.processCount.webIsolated", 1);' \
-      '  pref("browser.tabs.unloadOnLowMemory", true);' \
-      '  pref("browser.contentblocking.category", "strict");' \
-      '  pref("privacy.trackingprotection.enabled", true);' \
-      '  pref("privacy.trackingprotection.socialtracking.enabled", true);' \
-      '  pref("browser.sessionstore.interval", 60000);' \
-      '  pref("browser.newtabpage.activity-stream.feeds.topsites", false);' \
-      '  pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);' \
-      '  pref("extensions.pocket.enabled", false);' \
-      '  pref("network.trr.mode", 5);' \
-      '  function sandboxBrowserProxy(value) {' \
-      '    if (!value) return null;' \
-      '    var match = value.match(/^(?:(https?):\/\/)?(?:[^@\/]+@)?(\[[0-9a-f:.]+\]|[^\s:\/?#@]+)(?::([0-9]+))?\/?$/i);' \
-      '    if (!match) return null;' \
-      '    return { host: match[2].replace(/^\[|\]$/g, ""), port: match[3] ? parseInt(match[3], 10) : (match[1] && match[1].toLowerCase() == "https" ? 443 : 80) };' \
-      '  }' \
-      '  var httpProxy = sandboxBrowserProxy(getenv("http_proxy") || getenv("HTTP_PROXY"));' \
-      '  var httpsProxy = sandboxBrowserProxy(getenv("https_proxy") || getenv("HTTPS_PROXY")) || httpProxy;' \
-      '  if (httpProxy || httpsProxy) {' \
-      '    pref("network.proxy.type", 1);' \
-      '    if (httpProxy) {' \
-      '      pref("network.proxy.http", httpProxy.host);' \
-      '      pref("network.proxy.http_port", httpProxy.port);' \
-      '    }' \
-      '    if (httpsProxy) {' \
-      '      pref("network.proxy.ssl", httpsProxy.host);' \
-      '      pref("network.proxy.ssl_port", httpsProxy.port);' \
-      '    }' \
-      '  }' \
-      '  pref("browser.policies.alternatePath", "/etc/sandbox-browser/firefox-policies.json");' \
-      '}'; \
-    cat /tmp/firefox-privacy.cfg; \
-  } > "$cfg.guarded" \
-  && mv "$cfg.guarded" "$cfg" \
-  && rm /tmp/firefox-privacy.cfg \
-  && node --check < "$cfg" \
-  && grep -q 'SANDBOX_BROWSER_INTERACTIVE' "$cfg" \
-  && grep -q 'browser.policies.alternatePath' "$cfg"
+# Desktop defaults, the container's proxy variables and the privacy locks.
+COPY config/autoconfig.js /usr/lib/firefox/defaults/pref/sandbox-browser.js
+COPY config/browser-proxy.js config/firefox/desktop.cfg config/firefox/privacy.cfg /tmp/firefox/
+RUN cat /tmp/firefox/browser-proxy.js /tmp/firefox/desktop.cfg /tmp/firefox/privacy.cfg > /usr/lib/firefox/sandbox-browser.cfg \
+  && rm -r /tmp/firefox \
+  && node --check < /usr/lib/firefox/sandbox-browser.cfg
 
-COPY --chmod=755 scripts/firefox scripts/chromium /usr/local/bin/
+# Without these Chrome opens on sign-in and promotion pages, and warns about
+# --no-sandbox on every start where the wrapper has to pass it.
+COPY <<'EOF' /etc/opt/chrome/policies/managed/sandbox-browser.json
+{
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "PromotionalTabsEnabled": false,
+  "DefaultBrowserSettingEnabled": false,
+  "MetricsReportingEnabled": false,
+  "PrivacySandboxPromptEnabled": false,
+  "BackgroundModeEnabled": false,
+  "CommandLineFlagSecurityWarningsEnabled": false
+}
+EOF
+COPY --chmod=755 scripts/google-chrome-stable /usr/local/bin/google-chrome-stable
+RUN ln -sfn /usr/local/bin/google-chrome-stable /usr/bin/google-chrome-stable
+
+# Tor Browser is otherwise portable and keeps its profile inside its own
+# directory; is-packaged-app makes start-tor-browser use ~/.tor-browser instead,
+# so the install stays read-only. The archive keeps every release, unlike dist.
+# renovate: datasource=custom.tor-browser depName=tor-browser
+ARG TOR_BROWSER_VERSION=16.0.1
+ARG TOR_BROWSER_MIRROR=https://archive.torproject.org/tor-package-archive/torbrowser
+COPY config/tor-browser/signing-key.asc /tmp/tor-browser/signing-key.asc
+RUN case "$(dpkg --print-architecture)" in \
+      amd64) arch=x86_64 ;; \
+      arm64) arch=aarch64 ;; \
+      *) echo "no Tor Browser build for $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac \
+  && cd /tmp/tor-browser \
+  && file="tor-browser-linux-${arch}-${TOR_BROWSER_VERSION}.tar.xz" \
+  && curl -fsSL --retry 3 -O "${TOR_BROWSER_MIRROR}/${TOR_BROWSER_VERSION}/${file}" -O "${TOR_BROWSER_MIRROR}/${TOR_BROWSER_VERSION}/${file}.asc" \
+  && export GNUPGHOME=/tmp/tor-browser/gnupg \
+  && mkdir -m 700 "$GNUPGHOME" \
+  && gpg --batch --quiet --import signing-key.asc \
+  # The last VALIDSIG field is the primary key, so a signing subkey still matches.
+  && gpg --batch --status-fd 1 --verify "${file}.asc" "${file}" | grep -qE '^\[GNUPG:\] VALIDSIG .* EF6E286DDA85EA2A4BA7DE684E2C6E8793298290$' \
+  && tar -xJf "${file}" -C /opt \
+  && cd / && rm -rf /tmp/tor-browser \
+  && touch /opt/tor-browser/Browser/is-packaged-app \
+  && chown -R root:root /opt/tor-browser \
+  && chmod -R go-w,a+rX /opt/tor-browser \
+  && grep -q "\"version\":\"${TOR_BROWSER_VERSION}\"" /opt/tor-browser/Browser/tbb_version.json
+COPY config/autoconfig.js /opt/tor-browser/Browser/defaults/pref/sandbox-browser.js
+COPY config/browser-proxy.js config/tor-browser/proxy.cfg /tmp/tor-browser/
+RUN cat /tmp/tor-browser/browser-proxy.js /tmp/tor-browser/proxy.cfg > /opt/tor-browser/Browser/sandbox-browser.cfg \
+  && rm -r /tmp/tor-browser \
+  && node --check < /opt/tor-browser/Browser/sandbox-browser.cfg
+COPY --chmod=755 scripts/tor-browser /usr/local/bin/tor-browser
+COPY <<'EOF' /usr/share/applications/tor-browser.desktop
+[Desktop Entry]
+Type=Application
+Name=Tor Browser
+GenericName=Web Browser
+Comment=Browse the web through the Tor network
+Categories=Network;WebBrowser;Security;
+Exec=tor-browser %u
+Icon=/opt/tor-browser/Browser/browser/chrome/icons/default/default128.png
+StartupWMClass=Tor Browser
+EOF
 
 # The default WebBrowser helper is debian-sensible-browser, which finds nothing
 # here and fails the panel launcher with "Input/output error"; the stock firefox
-# helper resolves to the wrapper above. Compositing is off because Xvnc already
+# helper resolves to /usr/bin/firefox. Compositing is off because Xvnc already
 # provides one, and xfwm4 would only spend RDP bandwidth on it.
 RUN sed -i 's/^WebBrowser=.*/WebBrowser=firefox/' /etc/xdg/xfce4/helpers.rc \
   && grep -q '^WebBrowser=firefox' /etc/xdg/xfce4/helpers.rc

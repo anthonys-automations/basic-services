@@ -1,9 +1,9 @@
 # Sandbox Browser
 
-A container for browser automation with Chromium and Firefox. One container serves both access paths at once:
+A container for browser automation with Playwright Chromium, plus desktop browsers for a human. One container serves both access paths at once:
 
 - **SSH** — for an LLM agent to run headless Playwright tasks.
-- **RDP** — XRDP + XFCE so a human can drive Firefox interactively.
+- **RDP** — XRDP + XFCE so a human can drive Firefox, Google Chrome or Tor Browser interactively.
 
 Both listeners always start. Supply an SSH public key, `XRDP_PASSWORD`, or both; the container refuses to start with neither. Without a password the `user` account stays locked, so RDP rejects every login.
 
@@ -11,8 +11,10 @@ Both listeners always start. Supply an SSH public key, `XRDP_PASSWORD`, or both;
 
 - A single unprivileged account, `user` (UID/GID 10000), which every process
   including the listeners runs as. 1000 and 1001 belong to the base image.
-- Node.js, Playwright, Chromium, and Firefox.
-- `firefox` and `chromium` launchers on `PATH` for interactive use.
+- Node.js, Playwright and its Chromium build, the only browser for automation.
+- Stock Mozilla Firefox, Google Chrome and Tor Browser for interactive use,
+  launched as `firefox`, `google-chrome` and `tor-browser` or from the
+  application menu.
 - A bind-mounted `/home/user/workspace`.
 - Per-container SSH host keys and XRDP TLS certificate generated at startup.
 
@@ -43,7 +45,7 @@ mkdir -p secrets && touch secrets/authorized_keys
 
 ```bash
 ssh -p 2222 -i ~/.ssh/sandbox-browser user@localhost
-node -e "const { chromium, firefox } = require('playwright'); Promise.all([chromium.launch().then(b => b.close()), firefox.launch().then(b => b.close())]).then(() => console.log('both browsers launched'))"
+node -e "require('playwright').chromium.launch().then(b => b.close()).then(() => console.log('chromium launched'))"
 ```
 
 An agent can work in `/home/user/workspace` and invoke `node`, `python3`, `git`, or Playwright directly. Playwright runs headlessly, so no desktop is required. SSH passwords are disabled.
@@ -52,7 +54,7 @@ An agent can work in `/home/user/workspace` and invoke `node`, `python3`, `git`,
 
 ### Desktop access (RDP)
 
-Connect an RDP client to `127.0.0.1:3389` and log in as `user` with `XRDP_PASSWORD`. XFCE starts automatically, and Firefox can be launched from the application menu or a terminal.
+Connect an RDP client to `127.0.0.1:3389` and log in as `user` with `XRDP_PASSWORD`. XFCE starts automatically, and Firefox, Google Chrome and Tor Browser can be launched from the application menu or a terminal.
 
 The password is hashed into a runtime file that PAM checks; nothing is written to `/etc/shadow`, which an unprivileged container cannot touch anyway. No credential is stored in the image, and the entrypoint unsets the variable before starting the listeners, keeping it out of session processes.
 
@@ -110,20 +112,55 @@ enabled, so do not treat a container restart as a clean tenant boundary.
 
 ## Notes on browsers
 
+- Automation and humans use different browsers. Playwright's builds identify
+  themselves as automated (`navigator.webdriver`, a testing banner, no WebGL
+  in its Firefox), which bot checks such as captchas reject outright, so the
+  desktop gets stock vendor builds instead and Playwright keeps only its
+  Chromium. Playwright's Firefox and WebKit are removed from the image.
 - At startup, the entrypoint writes the configured `http_proxy`, `https_proxy`,
   `no_proxy` and their uppercase equivalents to `/run/sandbox/session.env`.
   PAM loads this file for RDP and SSH (including non-interactive commands),
   alongside the static image environment. Restart the container after changing
   proxy settings. Playwright scripts can read these variables to configure
   their launch proxy; Playwright does not automatically use them.
-- Ubuntu's `firefox` apt package is a snap stub that cannot run in a container, so both launchers point at Playwright's bundled builds.
-- Chromium's internal sandbox requires user namespaces. Where the container forbids them, the `chromium` launcher falls back to `--no-sandbox` and the container boundary remains the isolation layer. Firefox handles this case itself.
-- Playwright's Firefox build carries an autoconfig file that reapplies its automation preferences on every start, on the user branch, so a home page, PDF viewer or spell check setting chosen in the desktop session was silently discarded at the next launch. The image wraps that file in a check for `SANDBOX_BROWSER_INTERACTIVE`, which only the `firefox` launcher sets: the desktop gets performance-oriented defaults, honors `http_proxy`/`HTTP_PROXY` and `https_proxy`/`HTTPS_PROXY`, and uses an image-baked uBlock Origin installation, while Playwright, which runs the binary directly, keeps its automation preferences except for the privacy settings below.
-- Both interactive and Playwright Firefox launches lock telemetry uploads, studies and related recommendations off. `MOZ_CRASHREPORTER_DISABLE=1` disables crash reporting and crash dumps for normal container and SSH launches. These settings do not block visits to Mozilla sites or other Mozilla services such as extension updates, remote settings and Firefox Sync; use network controls if those connections must also be blocked.
+- Firefox comes from Mozilla's APT repository and Chrome from Google's, both
+  with fingerprint-checked signing keys. Ubuntu's own `firefox` package is a
+  snap stub that cannot run in a container, so an APT pin keeps Mozilla's
+  build. Both update with the image rather than in place.
+- Firefox reads an image-wide autoconfig that maps the proxy variables to its
+  manual proxy settings, enables WebGL on the software renderer
+  (`webgl.forbid-software=false`, `webgl.force-enabled=true`), and sets
+  performance-oriented defaults that a user can still change. Enterprise
+  policies in `/etc/firefox/policies` skip first-run, terms-of-use and
+  onboarding pages, disable updates, and force-install an image-baked uBlock
+  Origin. Telemetry uploads, studies and related recommendations are locked
+  off, and `MOZ_CRASHREPORTER_DISABLE=1` disables crash reporting for normal
+  container and SSH launches. These settings do not block visits to Mozilla
+  sites or other Mozilla services such as extension updates, remote settings
+  and Firefox Sync; use network controls if those connections must also be
+  blocked.
+- Chrome uses the proxy variables natively. Managed policies in
+  `/etc/opt/chrome/policies/managed` turn off sign-in, sync, promotional and
+  default-browser prompts, metrics reporting and the command-line flag
+  warning, and the `google-chrome` wrapper skips the first-run page. Chrome's
+  internal sandbox requires user namespaces; where the container forbids them,
+  the wrapper adds `--no-sandbox` and the container boundary remains the
+  isolation layer. It also passes `--ignore-gpu-blocklist`, without which
+  Chrome refuses WebGL on the software renderer.
+- WebGL in both Firefox and Chrome renders on Mesa's `llvmpipe` on the CPU.
+  It is slow, but sites that require WebGL work.
+- Tor Browser is installed read-only in `/opt/tor-browser`; its profile and
+  Tor state live in `~/.tor-browser`. It does not read the Firefox policies, so
+  it gets no uBlock and keeps its own anti-fingerprinting defaults. When
+  `https_proxy` or `http_proxy` is set, it is preselected as Tor's HTTPS proxy;
+  the proxy must allow `CONNECT` to Tor relay ports such as 443 and 9001, which
+  many corporate proxies do not. Press **Connect** to start Tor.
 
 ## Version policy
 
 The Playwright version is pinned in both the `FROM` tag and the npm package installed alongside it. Renovate updates them together; after a manual update, re-test both access paths.
+
+Firefox and Chrome are not pinned: each image build installs the vendors' current stable release. Tor Browser is pinned by `TOR_BROWSER_VERSION`, which Renovate tracks against Tor's update feed, and is downloaded from `TOR_BROWSER_MIRROR` (archive.torproject.org by default) and verified against the signing key in `config/tor-browser/signing-key.asc`. Older Tor Browser releases stop receiving security fixes as soon as a new one ships, so let these updates merge promptly.
 
 ## Design
 
@@ -131,4 +168,5 @@ Background on the desktop side is in [docs/xrdp-variant.md](docs/xrdp-variant.md
 
 Run the entrypoint regression tests from the repository root with
 `python3 sandbox-browser/scripts/test_runtime.py -v`. They cover disconnect grace,
-concurrent SSH sessions and proxy environment serialization for both images.
+concurrent SSH sessions and proxy environment serialization for both images,
+and the browser autoconfig proxy mapping when `node` is available.

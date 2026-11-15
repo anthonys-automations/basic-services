@@ -8,15 +8,15 @@ The interactive desktop and the SSH automation host are the same container: `ssh
 - `XRDP_PASSWORD` is hashed into a PAM password file. Without it that file is absent, so RDP authentication always fails while SSH keys still work.
 - `sshd` is key-only on port 2222; `xrdp` listens on 3389.
 - Every process, listeners included, runs as `user` (UID/GID 10000).
-- Both paths share the `user` account, `/home/user/workspace`, Playwright, Chromium, and Firefox.
+- Both paths share the `user` account, `/home/user/workspace`, and Playwright with its Chromium. The desktop also has stock Firefox, Google Chrome and Tor Browser.
 - SSH host keys and the XRDP TLS certificate are generated at startup, once per container instance.
 
 ## Implementation choices
 
 - **Xvnc backend, not Xorg.** `xorgxrdp` expects host privileges and device access that a container does not have. `xrdp.ini` sets `autorun=Xvnc`, but that only covers clients that send credentials; everyone else gets the login window, which offers the session sections in file order and would otherwise start with `Xorg`. The `Xorg`, `vnc-any` and `neutrinordp-any` sections are deleted from `xrdp.ini` so `Xvnc` is the only choice - which also stops the container being used to proxy RDP or VNC to any host a client names.
 - **XFCE session.** `/etc/xrdp/startwm.sh` clears inherited DBus variables before running `startxfce4`.
-- **Desktop defaults for a container.** XFCE's `WebBrowser` helper is `debian-sensible-browser` by default, which finds no browser here and fails the panel launcher with "Input/output error"; it points at the stock `firefox` helper instead, which resolves to the bundled wrapper. Compositing is disabled because Xvnc already provides one, `chansrv`'s FUSE drive redirection because `/dev/fuse` is not available, and `NO_AT_BRIDGE` is set because no accessibility bus runs. `/tmp/.X11-unix` and `/tmp/.ICE-unix` are created at build time, since a non-root X server refuses to create them. What is left in the log - missing `pm-is-supported`, `xkbcomp` keysym warnings, panel plugins the image does not install, PulseAudio finding no home directory of its own - is cosmetic.
-- **Bundled browsers.** Ubuntu's `firefox` package is a snap stub, so browser launchers point to exact Playwright browser paths resolved during image build.
+- **Desktop defaults for a container.** XFCE's `WebBrowser` helper is `debian-sensible-browser` by default, which finds no browser here and fails the panel launcher with "Input/output error"; it points at the stock `firefox` helper instead, which resolves to `/usr/bin/firefox`. Compositing is disabled because Xvnc already provides one, `chansrv`'s FUSE drive redirection because `/dev/fuse` is not available, and `NO_AT_BRIDGE` is set because no accessibility bus runs. `/tmp/.X11-unix` and `/tmp/.ICE-unix` are created at build time, since a non-root X server refuses to create them. What is left in the log - missing `pm-is-supported`, `xkbcomp` keysym warnings, panel plugins the image does not install, PulseAudio finding no home directory of its own - is cosmetic.
+- **Vendor browsers for humans.** Playwright's builds announce automation to every site, which bot checks reject, so the desktop runs Mozilla's Firefox and Google's Chrome from their APT repositories (Ubuntu's `firefox` package is a snap stub) and a signature-verified Tor Browser, and Playwright keeps only its Chromium for agents.
 - **Session tracking, not exclusion.** `pam_exec` creates `/run/sandbox/sessions/<pid>` on session open and removes it on close, for both SSH and XRDP. Concurrent sessions are allowed; readiness is what keeps a claimed container out of the pool. `MaxSessions=1` still limits XRDP to one desktop.
 
 ## Running unprivileged

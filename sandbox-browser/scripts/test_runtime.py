@@ -1,5 +1,7 @@
+import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -117,6 +119,60 @@ reap_disconnected_rdp_session
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("must be single-line", result.stderr)
+
+    @unittest.skipUnless(shutil.which("node"), "node is required")
+    def test_browser_autoconfig_proxy(self):
+        config = ROOT / "sandbox-browser/config"
+        parser = (config / "browser-proxy.js").read_text()
+        firefox = parser + (config / "firefox/desktop.cfg").read_text()
+        tor = parser + (config / "tor-browser/proxy.cfg").read_text()
+
+        def evaluate(source, variables):
+            harness = (
+                "const env = JSON.parse(process.argv[1]), prefs = {};"
+                "const getenv = name => env[name] || '';"
+                "const defaultPref = (name, value) => { prefs[name] = value; };"
+                "const lockPref = defaultPref;"
+                "eval(require('fs').readFileSync(0, 'utf8'));"
+                "console.log(JSON.stringify(prefs));"
+            )
+            result = subprocess.run(
+                ["node", "-e", harness, json.dumps(variables)],
+                input=source,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            return {k: v for k, v in json.loads(result.stdout).items() if "proxy" in k}
+
+        self.assertEqual(evaluate(firefox, {}), {})
+        self.assertEqual(evaluate(tor, {}), {})
+        self.assertEqual(evaluate(firefox, {"HTTP_PROXY": "not a url"}), {})
+        variables = {
+            "HTTP_PROXY": "http://user:pass@proxy.example:3128/",
+            "HTTPS_PROXY": "https://[fd00::1]",
+            "no_proxy": "localhost,.svc",
+        }
+        self.assertEqual(
+            evaluate(firefox, variables),
+            {
+                "network.proxy.type": 1,
+                "network.proxy.http": "proxy.example",
+                "network.proxy.http_port": 3128,
+                "network.proxy.ssl": "fd00::1",
+                "network.proxy.ssl_port": 443,
+                "network.proxy.no_proxies_on": "localhost,.svc",
+            },
+        )
+        self.assertEqual(
+            evaluate(tor, {"http_proxy": "proxy.example:8888"}),
+            {
+                "torbrowser.settings.proxy.enabled": True,
+                "torbrowser.settings.proxy.type": 2,
+                "torbrowser.settings.proxy.address": "proxy.example",
+                "torbrowser.settings.proxy.port": 8888,
+            },
+        )
 
 
 if __name__ == "__main__":

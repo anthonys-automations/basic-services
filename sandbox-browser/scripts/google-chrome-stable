@@ -1,0 +1,11 @@
+#!/bin/sh
+# The package's /usr/bin/google-chrome-stable is replaced by this file, so the
+# menu entry, google-chrome and a terminal all get the same desktop flags.
+# Chrome's sandbox needs user namespaces; drop it only when the container forbids them.
+# Without a GPU Chrome blocklists Mesa's software GL and turns WebGL off, which
+# captchas reject; Firefox gets the same llvmpipe renderer.
+set -- --no-first-run --no-default-browser-check --password-store=basic --ignore-gpu-blocklist "$@"
+if ! unshare --user --map-root-user true 2>/dev/null; then
+  set -- --no-sandbox "$@"
+fi
+exec /opt/google/chrome/google-chrome "$@"
