@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [exim, postfix, tinyproxy, sandbox-browser, devbox]
+        service: [exim, postfix, tinyproxy, transmission, sandbox-browser, devbox]
         platform: [linux/amd64, linux/arm64]
         # Matched on `platform` so each combination gains the right runner,
         # rather than adding standalone jobs.

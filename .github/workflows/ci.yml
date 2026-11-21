@@ -14,6 +14,7 @@ jobs:
       exim: ${{ steps.changes.outputs.exim }}
       postfix: ${{ steps.changes.outputs.postfix }}
       tinyproxy: ${{ steps.changes.outputs.tinyproxy }}
+      transmission: ${{ steps.changes.outputs.transmission }}
       sandbox-browser: ${{ steps.changes.outputs.sandbox-browser }}
       devbox: ${{ steps.changes.outputs.devbox }}
     
@@ -34,6 +35,8 @@ jobs:
               - 'postfix/**'
             tinyproxy:
               - 'tinyproxy/**'
+            transmission:
+              - 'transmission/**'
             sandbox-browser:
               - 'sandbox-browser/**'
             devbox:
@@ -57,6 +60,12 @@ jobs:
     uses: ./.github/workflows/build-tinyproxy.yml
     secrets: inherit
 
+  build-transmission:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.transmission == 'true'
+    uses: ./.github/workflows/build-transmission.yml
+    secrets: inherit
+
   build-sandbox-browser:
     needs: detect-changes
     if: needs.detect-changes.outputs.sandbox-browser == 'true'
@@ -71,7 +80,7 @@ jobs:
 
   summary:
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-exim, build-postfix, build-tinyproxy, build-sandbox-browser, build-devbox]
+    needs: [detect-changes, build-exim, build-postfix, build-tinyproxy, build-transmission, build-sandbox-browser, build-devbox]
     if: always()
     
     steps:
@@ -82,6 +91,7 @@ jobs:
           echo "- **exim:** ${{ needs.detect-changes.outputs.exim }}" >> $GITHUB_STEP_SUMMARY
           echo "- **postfix:** ${{ needs.detect-changes.outputs.postfix }}" >> $GITHUB_STEP_SUMMARY
           echo "- **tinyproxy:** ${{ needs.detect-changes.outputs.tinyproxy }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **transmission:** ${{ needs.detect-changes.outputs.transmission }}" >> $GITHUB_STEP_SUMMARY
           echo "- **sandbox-browser:** ${{ needs.detect-changes.outputs.sandbox-browser }}" >> $GITHUB_STEP_SUMMARY
           echo "- **devbox:** ${{ needs.detect-changes.outputs.devbox }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -89,5 +99,6 @@ jobs:
           echo "- **exim:** ${{ needs.build-exim.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **postfix:** ${{ needs.build-postfix.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **tinyproxy:** ${{ needs.build-tinyproxy.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **transmission:** ${{ needs.build-transmission.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **sandbox-browser:** ${{ needs.build-sandbox-browser.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **devbox:** ${{ needs.build-devbox.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY

@@ -1,6 +1,6 @@
 # basic-services
 
-Service images (`exim`, `postfix`, `tinyproxy`, `sandbox-browser`, `devbox`) published to
+Service images (`exim`, `postfix`, `tinyproxy`, `transmission`, `sandbox-browser`, `devbox`) published to
 DockerHub under the `anthonysautomations` namespace.
 
 The source here changes very rarely. Almost every release is a rebuild that picks
@@ -105,8 +105,9 @@ var or label alone.
 
 `.github/workflows/build-image.yml` is a reusable workflow; the per-service
 workflows (`build-exim.yml`, `build-postfix.yml`, `build-tinyproxy.yml`,
-`build-sandbox-browser.yml`, `build-devbox.yml`) supply the inputs and triggers, and `ci.yml` invokes
-them on relevant path changes. Each also runs weekly and on manual dispatch.
+`build-transmission.yml`, `build-sandbox-browser.yml`, `build-devbox.yml`)
+supply the inputs and triggers, and `ci.yml` invokes them on relevant path
+changes. Each also runs weekly and on manual dispatch.
 
 It runs in three stages:
 
