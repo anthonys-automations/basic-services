@@ -34,7 +34,6 @@ RUN apt-get update \
     ca-certificates \
     curl \
     dbus-x11 \
-    file \
     git \
     iproute2 \
     jq \
@@ -47,7 +46,6 @@ RUN apt-get update \
     xfce4 \
     xfce4-terminal \
     xrdp \
-    xz-utils \
   && rm -rf /var/lib/apt/lists/* \
   # 1000 and 1001 are already taken by the base image's ubuntu and pwuser accounts.
   && groupadd --gid 10000 user \
@@ -150,56 +148,15 @@ EOF
 COPY --chmod=755 scripts/google-chrome-stable /usr/local/bin/google-chrome-stable
 RUN ln -sfn /usr/local/bin/google-chrome-stable /usr/bin/google-chrome-stable
 
-# Tor Browser is otherwise portable and keeps its profile inside its own
-# directory; is-packaged-app makes start-tor-browser use ~/.tor-browser instead,
-# so the install stays read-only. The archive keeps every release, unlike dist.
-# renovate: datasource=custom.tor-browser depName=tor-browser
-ARG TOR_BROWSER_VERSION=16.0.1
-ARG TOR_BROWSER_MIRROR=https://archive.torproject.org/tor-package-archive/torbrowser
-COPY config/tor-browser/signing-key.asc /tmp/tor-browser/signing-key.asc
-RUN case "$(dpkg --print-architecture)" in \
-      amd64) arch=x86_64 ;; \
-      arm64) arch=aarch64 ;; \
-      *) echo "no Tor Browser build for $(dpkg --print-architecture)" >&2; exit 1 ;; \
-    esac \
-  && cd /tmp/tor-browser \
-  && file="tor-browser-linux-${arch}-${TOR_BROWSER_VERSION}.tar.xz" \
-  && curl -fsSL --retry 3 -O "${TOR_BROWSER_MIRROR}/${TOR_BROWSER_VERSION}/${file}" -O "${TOR_BROWSER_MIRROR}/${TOR_BROWSER_VERSION}/${file}.asc" \
-  && export GNUPGHOME=/tmp/tor-browser/gnupg \
-  && mkdir -m 700 "$GNUPGHOME" \
-  && gpg --batch --quiet --import signing-key.asc \
-  # The last VALIDSIG field is the primary key, so a signing subkey still matches.
-  && gpg --batch --status-fd 1 --verify "${file}.asc" "${file}" | grep -qE '^\[GNUPG:\] VALIDSIG .* EF6E286DDA85EA2A4BA7DE684E2C6E8793298290$' \
-  && tar -xJf "${file}" -C /opt \
-  && cd / && rm -rf /tmp/tor-browser \
-  && touch /opt/tor-browser/Browser/is-packaged-app \
-  && chown -R root:root /opt/tor-browser \
-  && chmod -R go-w,a+rX /opt/tor-browser \
-  && grep -q "\"version\":\"${TOR_BROWSER_VERSION}\"" /opt/tor-browser/Browser/tbb_version.json
-COPY config/autoconfig.js /opt/tor-browser/Browser/defaults/pref/sandbox-browser.js
-COPY config/browser-proxy.js config/tor-browser/proxy.cfg /tmp/tor-browser/
-RUN cat /tmp/tor-browser/browser-proxy.js /tmp/tor-browser/proxy.cfg > /opt/tor-browser/Browser/sandbox-browser.cfg \
-  && rm -r /tmp/tor-browser \
-  && node --check < /opt/tor-browser/Browser/sandbox-browser.cfg
-COPY --chmod=755 scripts/tor-browser /usr/local/bin/tor-browser
-COPY <<'EOF' /usr/share/applications/tor-browser.desktop
-[Desktop Entry]
-Type=Application
-Name=Tor Browser
-GenericName=Web Browser
-Comment=Browse the web through the Tor network
-Categories=Network;WebBrowser;Security;
-Exec=tor-browser %u
-Icon=/opt/tor-browser/Browser/browser/chrome/icons/default/default128.png
-StartupWMClass=Tor Browser
-EOF
-
 # The default WebBrowser helper is debian-sensible-browser, which finds nothing
 # here and fails the panel launcher with "Input/output error"; the stock firefox
-# helper resolves to /usr/bin/firefox. Compositing is off because Xvnc already
-# provides one, and xfwm4 would only spend RDP bandwidth on it.
+# helper resolves to /usr/bin/firefox. The panel lists one button per window
+# rather than grouping them by application. Compositing is off because Xvnc
+# already provides one, and xfwm4 would only spend RDP bandwidth on it.
 RUN sed -i 's/^WebBrowser=.*/WebBrowser=firefox/' /etc/xdg/xfce4/helpers.rc \
-  && grep -q '^WebBrowser=firefox' /etc/xdg/xfce4/helpers.rc
+  && grep -q '^WebBrowser=firefox' /etc/xdg/xfce4/helpers.rc \
+  && sed -i 's|<property name="grouping" type="uint" value="1"/>|<property name="grouping" type="uint" value="0"/>|' /etc/xdg/xfce4/panel/default.xml \
+  && grep -q '<property name="grouping" type="uint" value="0"/>' /etc/xdg/xfce4/panel/default.xml
 COPY config/xfce4/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
 
 # glib only reports the XDG document, picture and video directories when this
@@ -215,6 +172,14 @@ XDG_VIDEOS_DIR="$HOME/Videos"
 XDG_TEMPLATES_DIR="$HOME/Templates"
 XDG_PUBLICSHARE_DIR="$HOME/Public"
 EOF
+
+# Shift+Alt, the Windows layout hotkey, otherwise leaves Alt stuck down in the
+# session; the script explains why. The layout is the one the client had active
+# at connect: Xvnc receives keysyms, so switching cannot happen in the session.
+RUN --mount=type=bind,source=scripts/normalize-xrdp-keymaps.py,target=/tmp/normalize-xrdp-keymaps.py \
+  python3 /tmp/normalize-xrdp-keymaps.py /etc/xrdp/km-*.ini \
+  && grep -qx 'Key64=65513:0' /etc/xrdp/km-00000409.ini \
+  && ! grep -q '^Key64=65032:' /etc/xrdp/km-00000409.ini
 
 RUN sed -i 's/^autorun=.*/autorun=Xvnc/' /etc/xrdp/xrdp.ini \
   && sed -i 's/^max_bpp=.*/max_bpp=16/' /etc/xrdp/xrdp.ini \

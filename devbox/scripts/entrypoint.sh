@@ -42,7 +42,7 @@ rm -rf "${runtime_dir:?}"/*
 # PAM imports only the proxy allowlist into SSH sessions.
 : > "$runtime_dir/session.env"
 chmod 0644 "$runtime_dir/session.env"
-for name in http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+for name in http_proxy https_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY; do
   [[ -v "$name" ]] || continue
   value=${!name}
   if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then

@@ -33,9 +33,8 @@
     },
     {
       "customType": "regex",
-      "description": "devbox and sandbox-browser install some tools from release downloads, PyPI and npm rather than the distribution, so each version is an ARG preceded by a '# renovate:' comment naming its datasource and package. extractVersion strips decorations such as Terraform's 'v' tag prefix. Matched updates fall into the 'all dependencies' group through the custom.regex manager.",
+      "description": "devbox installs its tools from release downloads, PyPI and npm rather than the distribution, so each version is an ARG preceded by a '# renovate:' comment naming its datasource and package. extractVersion strips decorations such as Terraform's 'v' tag prefix. Matched updates fall into the 'all dependencies' group through the custom.regex manager.",
       "managerFilePatterns": [
-        "/^sandbox-browser\\/Dockerfile$/",
         "/^devbox\\/Dockerfile$/"
       ],
       "matchStrings": [
@@ -43,15 +42,6 @@
       ]
     }
   ],
-  "customDatasources": {
-    "tor-browser": {
-      "description": "Tor Browser's current stable release as published to its built-in updater. Only the latest version is listed, which is all the sandbox-browser pin needs; the Dockerfile downloads the pinned version from archive.torproject.org, which keeps every release, and verifies its signature.",
-      "defaultRegistryUrlTemplate": "https://aus1.torproject.org/torbrowser/update_3/release/download-linux-x86_64.json",
-      "transformTemplates": [
-        "{\"releases\": [{\"version\": version}]}"
-      ]
-    }
-  },
   "packageRules": [
     {
       "description": "Everything actionable lands in one branch/PR, so a run produces a single validate-build.yml dispatch and a single merge rather than one per dependency. The manager is listed explicitly instead of grouping '*': github-actions must stay out of the group because GITHUB_TOKEN cannot push under .github/workflows, and a grouped branch containing such a change would fail for every other update in it too. Combined with the top-level 'separateMajorMinor: false', which stops Renovate splitting major updates into their own branch, this yields exactly one renovate/* branch per run.",

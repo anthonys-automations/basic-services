@@ -1,3 +1,0 @@
-#!/bin/sh
-# --detach hands the terminal back; output goes nowhere unless --log is given.
-exec /opt/tor-browser/Browser/start-tor-browser --detach "$@"

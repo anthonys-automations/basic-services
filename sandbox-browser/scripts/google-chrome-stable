@@ -5,6 +5,22 @@
 # Without a GPU Chrome blocklists Mesa's software GL and turns WebGL off, which
 # captchas reject; Firefox gets the same llvmpipe renderer.
 set -- --no-first-run --no-default-browser-check --password-store=basic --ignore-gpu-blocklist "$@"
+# Chrome treats all_proxy as an HTTP proxy whatever its scheme. Its only SOCKS
+# variable is SOCKS_SERVER, read only when no other *_proxy is set; its SOCKS5
+# always resolves host names through the proxy, like curl's socks5h.
+proxy=${all_proxy:-${ALL_PROXY-}}
+case $proxy in
+  *://*)
+    case $(printf %s "${proxy%%://*}" | tr '[:upper:]' '[:lower:]') in
+      socks5 | socks5h)
+        server=${proxy#*://}
+        server=${server##*@}
+        unset all_proxy ALL_PROXY http_proxy HTTP_PROXY https_proxy HTTPS_PROXY ftp_proxy FTP_PROXY SOCKS_VERSION
+        export SOCKS_SERVER="socks5://${server%/}"
+        ;;
+    esac
+    ;;
+esac
 if ! unshare --user --map-root-user true 2>/dev/null; then
   set -- --no-sandbox "$@"
 fi

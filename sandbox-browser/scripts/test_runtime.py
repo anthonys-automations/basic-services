@@ -84,9 +84,11 @@ reap_disconnected_rdp_session
                 {
                     "http_proxy": "http://proxy.example:8888",
                     "https_proxy": "http://user:pass@proxy.example:8888",
+                    "all_proxy": "socks5h://socks.example:1080",
                     "no_proxy": "localhost,.svc,10.0.0.0/8",
                     "HTTP_PROXY": "",
                     "HTTPS_PROXY": "http://upper.example:3128",
+                    "ALL_PROXY": "socks5://upper.example:1080",
                     "NO_PROXY": "::1",
                 },
             ):
@@ -125,7 +127,6 @@ reap_disconnected_rdp_session
         config = ROOT / "sandbox-browser/config"
         parser = (config / "browser-proxy.js").read_text()
         firefox = parser + (config / "firefox/desktop.cfg").read_text()
-        tor = parser + (config / "tor-browser/proxy.cfg").read_text()
 
         def evaluate(source, variables):
             harness = (
@@ -146,7 +147,6 @@ reap_disconnected_rdp_session
             return {k: v for k, v in json.loads(result.stdout).items() if "proxy" in k}
 
         self.assertEqual(evaluate(firefox, {}), {})
-        self.assertEqual(evaluate(tor, {}), {})
         self.assertEqual(evaluate(firefox, {"HTTP_PROXY": "not a url"}), {})
         variables = {
             "HTTP_PROXY": "http://user:pass@proxy.example:3128/",
@@ -165,14 +165,43 @@ reap_disconnected_rdp_session
             },
         )
         self.assertEqual(
-            evaluate(tor, {"http_proxy": "proxy.example:8888"}),
+            evaluate(firefox, {**variables, "ALL_PROXY": "socks5h://user:pass@socks.example"}),
             {
-                "torbrowser.settings.proxy.enabled": True,
-                "torbrowser.settings.proxy.type": 2,
-                "torbrowser.settings.proxy.address": "proxy.example",
-                "torbrowser.settings.proxy.port": 8888,
+                "network.proxy.type": 1,
+                "network.proxy.socks": "socks.example",
+                "network.proxy.socks_port": 1080,
+                "network.proxy.socks_version": 5,
+                "network.proxy.socks5_remote_dns": True,
+                "network.proxy.no_proxies_on": "localhost,.svc",
             },
         )
+        self.assertEqual(
+            evaluate(firefox, {"all_proxy": "http://all.example:8080", "http_proxy": "socks5://x:1"}),
+            {
+                "network.proxy.type": 1,
+                "network.proxy.http": "all.example",
+                "network.proxy.http_port": 8080,
+                "network.proxy.ssl": "all.example",
+                "network.proxy.ssl_port": 8080,
+            },
+        )
+        self.assertEqual(evaluate(firefox, {"http_proxy": "socks5://socks.example:1080"}), {})
+
+    def test_xrdp_keymap_modifiers(self):
+        script = ROOT / "sandbox-browser/scripts/normalize-xrdp-keymaps.py"
+        keymap = (
+            "[noshift]\r\nKey38=97:97\r\nKey64=65513:0\r\nKey113=65027:0\r\n"
+            "[shift]\r\nKey38=65:65\r\nKey64=65032:0\r\nKey113=65312:0\r\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "km-00000409.ini"
+            path.write_bytes(keymap.encode())
+            for _ in range(2):
+                subprocess.run(["python3", script, path], check=True, capture_output=True)
+                self.assertEqual(
+                    path.read_bytes().decode(),
+                    keymap.replace("Key64=65032", "Key64=65513").replace("Key113=65312", "Key113=65027"),
+                )
 
 
 if __name__ == "__main__":

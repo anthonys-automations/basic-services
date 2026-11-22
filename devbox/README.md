@@ -103,8 +103,8 @@ To manage the identity yourself, mount a directory containing
   launches. These settings do not block visits to Mozilla sites or other
   Mozilla services such as extension updates, remote settings and Firefox Sync;
   use network controls if those connections must also be blocked.
-- **Proxies:** the entrypoint forwards `http_proxy`, `https_proxy`, `no_proxy`
-  and their uppercase equivalents to SSH sessions through PAM, including
+- **Proxies:** the entrypoint forwards `http_proxy`, `https_proxy`,
+  `all_proxy`, `no_proxy` and their uppercase equivalents to SSH sessions through PAM, including
   non-interactive SSH commands. Restart the container after changing these
   variables. Playwright scripts must still configure their launch proxy
   explicitly using the forwarded variables.
