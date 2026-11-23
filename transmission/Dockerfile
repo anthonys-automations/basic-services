@@ -1,4 +1,4 @@
-FROM docker.io/anthonysautomations/dante-client:2026.11.23.3
+FROM docker.io/anthonysautomations/dante-client:2026.11.23.4
 
 # Build-time provenance: the Git commit this image was built from, requested so a
 # running container can be traced back to source for audit. Kept as an env var
