@@ -8,6 +8,6 @@ FROM docker.io/anthonysautomations/dante-client:2026.11.23.4
 ARG GIT_COMMIT=unknown
 ENV GIT_COMMIT=${GIT_COMMIT}
 
-RUN apk update && apk add --no-cache transmission-daemon dante jq
+RUN apk update && apk add --no-cache transmission-daemon jq
 
 USER 100:101
